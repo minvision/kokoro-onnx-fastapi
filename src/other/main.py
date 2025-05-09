@@ -29,6 +29,7 @@ import tempfile
 
 # 修复相对导入问题
 from download_deps import check_and_download_dependencies, ensure_dir_exists
+from cache import check_audio_cache
 
 # 配置日志
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -87,6 +88,19 @@ async def generate_speech_api(
         # 规范化speed参数，确保是一个小数位
         speed = round(float(speed), 1)
         
+        # 缓存检查逻辑
+        if filename: # 仅当提供了明确的文件名时才检查缓存
+            safe_filename_base = "".join(c for c in filename if c.isalnum() or c in ('_', '-')).rstrip()
+            if not safe_filename_base: # 如果处理后为空，则不使用缓存逻辑或赋一个默认值
+                pass
+            else:
+                cached_file_path = check_audio_cache(safe_filename_base, AUDIO_OUTPUT_DIR)
+                if cached_file_path:
+                    logging.info(f"缓存命中：找到文件 {cached_file_path}，直接返回。")
+                    return FileResponse(cached_file_path, media_type='audio/wav', filename=os.path.basename(cached_file_path))
+                else:
+                    logging.info(f"缓存未命中：文件 {safe_filename_base}.wav 在 {AUDIO_OUTPUT_DIR} 中未找到，将进行生成。")
+        
         phonemes, _ = g2p_converter(text)
         samples, sample_rate = kokoro_model.create(phonemes, voice=voice, speed=speed, is_phonemes=True)
         
@@ -131,5 +145,5 @@ if __name__ == "__main__":
         logging.error("'other' 依赖下载失败，FastAPI 服务无法启动。")
 
 # 示例 curl 请求 (针对 port 8211):
-# curl -X POST "http://localhost:8211/generate-speech/" -H "Content-Type: application/json" -d '{"text":"Hello world, this is a test.", "voice":"en-us-kathleen-low", "filename":"hello_other", "speed": 1.0}' --output src/other/generated_audio/hello_other_output.wav
-# (Note: 'en-us-kathleen-low' is an example voice for v1.0, check model documentation for available voices like 'af_heart')
+# curl -X POST "http://localhost:8211/generate-speech/" -H "Content-Type: application/json" -d '{"text":"Hello world, this is a test.", "voice":"af_heart", "filename":"hello_other", "speed": 1.0}' --output src/other/generated_audio/hello_other_output.wav
+# (Note: 'af_heart' is an example voice for v1.0, check model documentation for available voices like 'af_heart')

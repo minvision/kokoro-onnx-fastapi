@@ -14,6 +14,7 @@ RUN uv pip install --no-cache-dir -r requirements.txt --system
 # 复制应用代码到工作目录
 COPY main.py .
 COPY download_deps.py .
+COPY cache.py .
 # COPY . . # 或者直接复制所有内容，如果确定没有其他不必要的文件
 
 # 创建模型和音频输出目录 (这些目录将通过 docker-compose volumes 映射)
