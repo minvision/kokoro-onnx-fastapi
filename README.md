@@ -1,5 +1,7 @@
 # kokoro-onnx-fastapi
 
+*[简体中文](README.md) | [English](README.en.md)*
+
 基于[kokoro-onnx](https://github.com/thewh1teagle/kokoro-onnx)开发的轻量级语音合成API服务，采用FastAPI框架构建。本项目提供简便易用的本地或服务器语音合成解决方案，支持中文及其他语言（如英文）的高质量语音生成。
 
 ## 项目特点
@@ -26,133 +28,67 @@
 
 ### 本地运行
 
-#### 中文语音服务
-
-```bash
+```console
 # 克隆代码仓库
 git clone https://github.com/kamjin3086/kokoro-onnx-fastapi.git
 
-# 进入中文模型目录
+# 中文服务
 cd kokoro-onnx-fastapi/src/chinese
-
-# 创建Python虚拟环境
-uv venv -p 3.12
-
-# 激活虚拟环境
-## Windows系统:
-.venv\Scripts\activate
-## Linux/MacOS系统:
-source .venv/bin/activate
-
-# 安装项目依赖
+uv venv -p 3.12 && source .venv/bin/activate  # Linux/macOS
+# 或 .venv\Scripts\activate  # Windows
 uv pip install -r requirements.txt
+python main.py  # 服务运行在 http://localhost:8210
 
-# 启动服务
-python main.py
-```
-
-服务将在`http://localhost:8210`端口运行，首次启动时会自动下载所需模型文件。
-
-#### 其他语言语音服务
-
-```bash
-# 克隆代码仓库（如已克隆可跳过）
-git clone https://github.com/kamjin3086/kokoro-onnx-fastapi.git
-
-# 进入其他语言模型目录
+# 其他语言服务
 cd kokoro-onnx-fastapi/src/other
-
-# 创建Python虚拟环境
-uv venv -p 3.12
-
-# 激活虚拟环境
-## Linux/MacOS系统:
-source .venv/bin/activate
-## Windows系统:
-.venv\Scripts\activate
-
-# 安装项目依赖
+uv venv -p 3.12 && source .venv/bin/activate  # Linux/macOS
+# 或 .venv\Scripts\activate  # Windows
 uv pip install -r requirements.txt
-
-# 启动服务
-python main.py
+python main.py  # 服务运行在 http://localhost:8211
 ```
-
-服务将在`http://localhost:8211`端口运行。
 
 ### Docker容器部署
 
-#### 中文语音服务
-
-```bash
-# 克隆代码仓库（如已克隆可跳过）
-git clone https://github.com/kamjin3086/kokoro-onnx-fastapi.git
-
-# 进入中文模型目录
+```console
+# 中文服务
 cd kokoro-onnx-fastapi/src/chinese
+docker-compose up -d --build  # 服务运行在 http://localhost:8210
 
-# 构建并启动Docker容器
-docker-compose up -d --build
-```
-
-容器化服务将在`http://localhost:8210`端口运行。
-
-#### 其他语言语音服务
-
-```bash
-# 克隆代码仓库（如已克隆可跳过）
-git clone https://github.com/kamjin3086/kokoro-onnx-fastapi.git
-
-# 进入其他语言模型目录
+# 其他语言服务
 cd kokoro-onnx-fastapi/src/other
-
-# 构建并启动Docker容器
-docker-compose up -d --build
+docker-compose up -d --build  # 服务运行在 http://localhost:8211
 ```
-
-容器化服务将在`http://localhost:8211`端口运行。
 
 ## API使用指南
 
 API接口文档访问地址：`http://localhost:8210/docs`（中文服务）或`http://localhost:8211/docs`（其他语言服务）
 
-### 中文语音合成API
+### 使用示例
 
-**接口**：`POST /generate-speech/`
+**中文语音合成：**
 
-**请求参数**：
-- `text`：要转换的中文文本内容
-- `voice`：选择的声音模型（如"zf_001"）
-- `filename`（可选）：生成音频的文件名（不含路径和扩展名）
-- `speed`（可选）：语音速度调节，默认为1.0
-
-**请求示例**：
-
-```bash
+```console
 curl -X POST "http://localhost:8210/generate-speech/" \
      -H "Content-Type: application/json" \
      -d '{"text":"你好，世界！", "voice":"zf_001", "filename":"hello_world", "speed": 1.0}' \
      --output hello_world.wav
 ```
 
-### 其他语言语音合成API
+**其他语言（如英文）语音合成：**
 
-**接口**：`POST /generate-speech/`
-
-**请求参数**：
-- `text`：要转换的文本内容（如英文）
-- `voice`：选择的声音模型（如"en-us-kathleen-low"或"af_heart"）
-- `filename`（可选）：生成音频的文件名（不含路径和扩展名）
-- `speed`（可选）：语音速度调节，默认为1.0
-
-**请求示例**：
-
-```bash
+```console
 curl -X POST "http://localhost:8211/generate-speech/" \
      -H "Content-Type: application/json" \
-     -d '{"text":"Hello world, this is a test.", "voice":"en-us-kathleen-low", "filename":"hello_test", "speed": 1.0}' \
+     -d '{"text":"Hello world, this is a test.", "voice":"af_heart", "filename":"hello_test", "speed": 1.0}' \
      --output hello_test.wav
 ```
+
+| 参数 | 说明 |
+|------|------|
+| text | 要转换的文本内容 |
+| voice | 声音模型名称，如"zf_001"(中文)或"af_heart"(英文) |
+| filename | (可选)生成的音频文件名，不含路径和扩展名 |
+| speed | (可选)语音速度调节，默认为1.0 |
 
 ## 配置与自定义
 
@@ -160,41 +96,12 @@ curl -X POST "http://localhost:8211/generate-speech/" \
 - 生成的音频文件存储在各自服务目录下的`generated_audio/`文件夹
 - 可通过编辑`main.py`配置文件调整服务参数
 
-## 项目结构
-
-```
-.
-├── src/
-│   ├── chinese/             # 中文语音合成服务
-│   │   ├── main.py          # 主应用程序
-│   │   ├── download_deps.py # 依赖下载工具
-│   │   ├── cache.py         # 音频缓存工具
-│   │   ├── Dockerfile       # Docker配置
-│   │   ├── docker-compose.yaml  # Docker Compose配置
-│   │   ├── requirements.txt # 项目依赖列表
-│   │   ├── models/          # 模型文件目录
-│   │   └── generated_audio/ # 生成音频存储目录
-│   │
-│   └── other/               # 其他语言语音合成服务
-│       ├── main.py          # 主应用程序
-│       ├── download_deps.py # 依赖下载工具
-│       ├── Dockerfile       # Docker配置
-│       ├── docker-compose.yaml  # Docker Compose配置
-│       ├── requirements.txt # 项目依赖列表
-│       ├── models/          # 模型文件目录
-│       └── generated_audio/ # 生成音频存储目录
-```
 
 ## 声音模型说明
 
-### 中文声音模型
-使用`v1.1-zh`版本模型，提供多种中文女声和男声选择。
-
-### 其他语言声音模型
-使用`v1.0`版本模型，支持多种语言和声音类型。
-
-详细的声音模型列表请参考[Kokoro项目文档](https://huggingface.co/hexgrad/Kokoro-82M/blob/main/VOICES.md)。
+- **中文声音模型**: 使用`v1.1-zh`版本模型，提供多种中文女声和男声选择。[查看详细列表](https://huggingface.co/hexgrad/Kokoro-82M-v1.1-zh/tree/main/voices)
+- **其他语言声音模型**: 使用`v1.0`版本模型，支持多种语言和声音类型。[查看详细列表](https://huggingface.co/hexgrad/Kokoro-82M/blob/main/VOICES.md)
 
 ## 许可证
 
-本项目采用MIT许可证，基于[原kokoro-onnx项目](https://github.com/thewh1teagle/kokoro-onnx)开发，请同时遵循原项目的许可要求。 
+本项目采用[MIT许可证](LICENSE)，基于[原kokoro-onnx项目](https://github.com/thewh1teagle/kokoro-onnx)开发，请同时遵循原项目的许可要求。 
