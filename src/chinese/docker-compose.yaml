@@ -1,0 +1,23 @@
+
+services:
+  app:
+    restart: unless-stopped
+    container_name: kokoro-onnx-fastapi-chinese
+    image: kamjin3086/kokoro-onnx-fastapi-chinese
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8210:8210"
+    volumes:
+      # 将宿主机的 models 目录映射到容器的 /app/models 目录
+      # 请确保宿主机上的 ./models 目录存在且包含必要的模型文件
+      # 或者依赖应用启动时 download_deps.py 的下载功能
+      - ./models:/app/models
+      # 将宿主机的 generated_audio 目录映射到容器的 /app/generated_audio 目录
+      # 应用生成的音频文件将保存在这里，并持久化到宿主机
+      - ./generated_audio:/app/generated_audio
+    # environment:
+      # 如果需要特定的环境变量，可以在这里设置
+      # - SOME_VARIABLE=some_value
+    # command: python main.py # 如果 Dockerfile 中的 CMD 不合适，可以在这里覆盖 
