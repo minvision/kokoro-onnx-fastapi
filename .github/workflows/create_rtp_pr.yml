@@ -1,0 +1,405 @@
+# GitHub Actions workflow to create a branch, add RTP streaming files, commit, and open a PR.
+# Trigger: manual (workflow_dispatch). It writes two files into the repository and creates a PR.
+# NOTE: Review file contents below before running in a production repo.
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: 'Branch name to create (will be used as PR head)'
+        required: false
+        default: 'feature/rtp-streaming-with-cancel'
+      pr_title:
+        description: 'Pull request title'
+        required: false
+        default: 'RTP streaming from create_stream + cancel/status APIs'
+      pr_body:
+        description: 'Pull request body'
+        required: false
+        default: 'Add async RTP streaming from kokoro_onnx.create_stream and task management endpoints (start, cancel, status).'
+
+permissions:
+  contents: write   # allow pushing commits
+  pull-requests: write
+
+jobs:
+  create-pr:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+          fetch-depth: 0
+
+      - name: Set up Git user
+        run: |
+          git config user.name "${{ github.actor }}"
+          git config user.email "${{ github.actor }}@users.noreply.github.com"
+
+      - name: Prepare branch
+        id: branch
+        run: |
+          BRANCH="${{ github.event.inputs.branch || github.event.inputs.branch == '' && 'feature/rtp-streaming-with-cancel' || github.event.inputs.branch }}"
+          # ensure branch contains run id to avoid collisions if desired; here using provided branch directly
+          git checkout -b "${BRANCH}"
+
+      - name: Create src/utils/stream_rtp_streaming.py
+        run: |
+          mkdir -p src/utils
+          cat > src/utils/stream_rtp_streaming.py <<'EOF'
+import asyncio
+import random
+import logging
+from typing import Optional, AsyncGenerator, Tuple
+
+import numpy as np
+
+logger = logging.getLogger(__name__)
+
+def _ensure_mono(samples: np.ndarray) -> np.ndarray:
+    samples = np.asarray(samples)
+    if samples.ndim == 1:
+        return samples
+    return samples.mean(axis=1)
+
+def _resample_linear(samples: np.ndarray, orig_sr: int, target_sr: int) -> np.ndarray:
+    if orig_sr == target_sr:
+        return samples
+    samples = np.asarray(samples)
+    duration = samples.shape[0] / float(orig_sr)
+    new_len = max(1, int(round(duration * target_sr)))
+    if new_len == samples.shape[0]:
+        return samples
+    old_idx = np.linspace(0, samples.shape[0] - 1, samples.shape[0])
+    new_idx = np.linspace(0, samples.shape[0] - 1, new_len)
+    res = np.interp(new_idx, old_idx, samples).astype(samples.dtype)
+    return res
+
+def _float_to_int16_bytes(samples: np.ndarray) -> bytes:
+    clipped = np.clip(samples, -1.0, 1.0)
+    int16 = (clipped * 32767.0).astype(np.int16)
+    return int16.tobytes()
+
+def _build_rtp_header(seq: int, timestamp: int, ssrc: int, payload_type: int = 96, marker: int = 0) -> bytes:
+    b0 = 0x80
+    b1 = (marker << 7) | (payload_type & 0x7F)
+    header = bytearray(12)
+    header[0] = b0
+    header[1] = b1
+    header[2] = (seq >> 8) & 0xFF
+    header[3] = seq & 0xFF
+    header[4] = (timestamp >> 24) & 0xFF
+    header[5] = (timestamp >> 16) & 0xFF
+    header[6] = (timestamp >> 8) & 0xFF
+    header[7] = timestamp & 0xFF
+    header[8] = (ssrc >> 24) & 0xFF
+    header[9] = (ssrc >> 16) & 0xFF
+    header[10] = (ssrc >> 8) & 0xFF
+    header[11] = ssrc & 0xFF
+    return bytes(header)
+
+async def stream_rtp_from_asyncgen(
+    host: str,
+    port: int,
+    async_gen: AsyncGenerator[Tuple[np.ndarray, int], None],
+    *,
+    realtime: bool = True,
+    chunk_ms: int = 20,
+    target_sr: int = 8000,
+    payload_type: int = 96,
+    logger_prefix: str = ""
+) -> None:
+    """
+    From kokoro.create_stream async generator, stream RTP (L16) to host:port.
+    """
+    prefix = f"[stream_rtp_streaming]{logger_prefix} " if logger_prefix else "[stream_rtp_streaming] "
+    loop = asyncio.get_running_loop()
+    transport = None
+    try:
+        transport, _ = await loop.create_datagram_endpoint(lambda: asyncio.DatagramProtocol(), remote_addr=(host, int(port)))
+        seq = random.randint(0, 0xFFFF)
+        timestamp = random.randint(0, 0x7FFFFFFF)
+        ssrc = random.getrandbits(32)
+
+        bytes_per_ms = (target_sr * 2) / 1000.0
+        samples_per_packet = int(round(target_sr * (chunk_ms / 1000.0)))
+        chunk_bytes = max(1, int(round(bytes_per_ms * float(chunk_ms))))
+        max_payload = 1400
+        if chunk_bytes > max_payload:
+            chunk_bytes = max_payload
+
+        buffer = b""
+        packet_count = 0
+        async for audio_part, sr in async_gen:
+            try:
+                arr = np.asarray(audio_part, dtype=np.float32)
+            except Exception:
+                logger.exception(prefix + "received non-numpy audio part, skipping")
+                continue
+            arr = _ensure_mono(arr)
+            if int(sr) != target_sr:
+                arr = _resample_linear(arr, int(sr), target_sr)
+            pcm_bytes = _float_to_int16_bytes(arr)
+            buffer += pcm_bytes
+
+            frame_size = samples_per_packet * 2
+            while len(buffer) >= frame_size:
+                payload = buffer[:frame_size]
+                buffer = buffer[frame_size:]
+                header = _build_rtp_header(seq & 0xFFFF, timestamp & 0xFFFFFFFF, ssrc, payload_type, 0)
+                packet = header + payload
+                transport.sendto(packet)
+                seq = (seq + 1) & 0xFFFF
+                timestamp = (timestamp + samples_per_packet) & 0xFFFFFFFF
+                packet_count += 1
+                if realtime:
+                    await asyncio.sleep(chunk_ms / 1000.0)
+
+        if len(buffer) > 0:
+            header = _build_rtp_header(seq & 0xFFFF, timestamp & 0xFFFFFFFF, ssrc, payload_type, 1)
+            transport.sendto(header + buffer)
+            packet_count += 1
+
+        logger.info(f"{prefix}Stream finished to {host}:{port}, packets={packet_count}")
+    except asyncio.CancelledError:
+        logger.info(prefix + "streaming task cancelled")
+        raise
+    except Exception:
+        logger.exception(prefix + "streaming failed")
+        raise
+    finally:
+        if transport is not None:
+            transport.close()
+EOF
+
+      - name: Create src/chinese/main.py (modified with streaming endpoints)
+        run: |
+          mkdir -p src/chinese
+          cat > src/chinese/main.py <<'EOF'
+"""
+# Note: this file is a modified version of the repository's src/chinese/main.py to add streaming task management and RTP streaming endpoint.
+# It preserves the original model loading logic and adds the new endpoints: /stream-rtp-streaming/, /stream-cancel/{taskid}, /stream-status/{taskid}.
+"""
+
+import os
+import logging
+import uvicorn
+import uuid
+import asyncio
+from fastapi import FastAPI, HTTPException, Body
+from fastapi.responses import FileResponse, JSONResponse
+import numpy as np
+import tempfile
+
+from misaki import zh
+from kokoro_onnx import Kokoro
+from download_deps import check_and_download_dependencies, ensure_dir_exists
+from cache import check_audio_cache
+
+from utils.stream_rtp_streaming import stream_rtp_from_asyncgen
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+MODELS_DIR = os.path.join(BASE_DIR, "models")
+AUDIO_OUTPUT_DIR = os.path.join(BASE_DIR, "generated_audio")
+
+app = FastAPI()
+
+kokoro_model: Kokoro = None
+g2p_converter = None
+
+# Task management
+active_stream_tasks = {}
+active_tasks_lock = asyncio.Lock()
+
+async def _register_stream_task(taskid: str, task: asyncio.Task) -> None:
+    async with active_tasks_lock:
+        active_stream_tasks[taskid] = task
+    def _on_done(t: asyncio.Task):
+        async def _remove():
+            async with active_tasks_lock:
+                if taskid in active_stream_tasks and active_stream_tasks[taskid] is t:
+                    del active_stream_tasks[taskid]
+        try:
+            asyncio.get_running_loop().create_task(_remove())
+        except Exception:
+            logging.exception(f"Failed scheduling cleanup for task {taskid}")
+    task.add_done_callback(_on_done)
+
+@app.on_event("startup")
+async def startup_event():
+    global kokoro_model, g2p_converter
+    logging.info("FastAPI 应用启动，开始检查和下载依赖文件...")
+    ensure_dir_exists(MODELS_DIR)
+    ensure_dir_exists(AUDIO_OUTPUT_DIR)
+
+    if not check_and_download_dependencies():
+        logging.error("依赖文件未能成功准备，应用可能无法正常处理请求。")
+    else:
+        logging.info("依赖文件已就绪，开始加载模型...")
+        try:
+            model_path = os.path.join(MODELS_DIR, "kokoro-v1.1-zh.onnx")
+            voices_path = os.path.join(MODELS_DIR, "voices-v1.1-zh.bin")
+            config_path = os.path.join(MODELS_DIR, "config.json")
+            if not (os.path.exists(model_path) and os.path.exists(voices_path) and os.path.exists(config_path)):
+                logging.error(f"一个或多个模型文件在 {MODELS_DIR} 中缺失，无法加载模型。")
+                return
+            kokoro_model = Kokoro(model_path, voices_path, vocab_config=config_path)
+            g2p_converter = zh.ZHG2P(version="1.1")
+            logging.info("Kokoro 模型和 G2P 转换器加载成功。")
+        except Exception as e:
+            logging.exception(f"加载模型或 G2P 转换器失败: {e}")
+
+@app.post("/stream-rtp-streaming/")
+async def stream_rtp_streaming_endpoint(
+    text: str = Body(..., description="要转换为语音的文本"),
+    voice: str = Body(..., description="声音，例如 'zf_001'"),
+    target_host: str = Body(..., description="接收 RTP 的目标 IP"),
+    target_port: int = Body(..., description="接收 RTP 的目标 UDP 端口"),
+    speed: float = Body(1.0, description="语速"),
+    chunk_ms: int = Body(20, description="每个 RTP 包对应的毫秒数（默认20ms）"),
+    taskid: str = Body(None, description="可选：指定用于管理该推流任务的 taskid（若为空服务端会生成）"),
+):
+    global kokoro_model, g2p_converter
+    if not kokoro_model or not g2p_converter:
+        raise HTTPException(status_code=503, detail="模型服务尚未准备好")
+
+    try:
+        speed = round(float(speed), 1)
+    except Exception:
+        raise HTTPException(status_code=400, detail="speed 参数无效")
+
+    if taskid:
+        try:
+            uuid_obj = uuid.UUID(taskid)
+            taskid_str = str(uuid_obj)
+        except Exception:
+            raise HTTPException(status_code=400, detail="taskid 必须是有效的 UUID 字符串")
+    else:
+        taskid_str = str(uuid.uuid4())
+
+    async with active_tasks_lock:
+        if taskid_str in active_stream_tasks:
+            raise HTTPException(status_code=409, detail=f"taskid {taskid_str} 已存在且正在运行")
+
+    try:
+        phonemes, _ = g2p_converter(text)
+    except Exception as e:
+        logging.exception("g2p conversion failed")
+        raise HTTPException(status_code=500, detail="g2p 转换失败: {e}")
+
+    try:
+        stream_gen = kokoro_model.create_stream(phonemes, voice=voice, speed=speed, is_phonemes=True)
+    except Exception as e:
+        logging.exception("create_stream failed")
+        raise HTTPException(status_code=500, detail="无法创建流: {e}")
+
+    async def _runner():
+        try:
+            await stream_rtp_from_asyncgen(
+                target_host,
+                target_port,
+                stream_gen,
+                realtime=True,
+                chunk_ms=int(chunk_ms),
+                target_sr=8000,
+                payload_type=96,
+                logger_prefix=f"{target_host}:{target_port}"
+            )
+            logging.info(f"Streaming task {taskid_str} finished normally")
+        except asyncio.CancelledError:
+            logging.info(f"Streaming task {taskid_str} cancelled")
+            try:
+                await stream_gen.aclose()
+            except Exception:
+                pass
+            raise
+        except Exception:
+            logging.exception(f"Streaming task {taskid_str} failed with exception")
+            raise
+
+    task = asyncio.create_task(_runner())
+    await _register_stream_task(taskid_str, task)
+
+    return JSONResponse({"status": "ok", "taskid": taskid_str})
+
+@app.post("/stream-cancel/{taskid}")
+async def stream_cancel(taskid: str):
+    async with active_tasks_lock:
+        task = active_stream_tasks.get(taskid)
+        if not task:
+            return JSONResponse({"status": "not_found", "taskid": taskid, "message": "任务不存在或已结束"}, status_code=404)
+
+    cancelled = False
+    try:
+        task.cancel()
+        try:
+            await asyncio.wait_for(asyncio.shield(task), timeout=3.0)
+        except asyncio.TimeoutError:
+            logging.info(f"Cancellation of task {taskid} timed out (task may still be running)")
+        except asyncio.CancelledError:
+            cancelled = True
+        except Exception:
+            pass
+    except Exception:
+        logging.exception(f"Failed to cancel task {taskid}")
+
+    async with active_tasks_lock:
+        still_exists = taskid in active_stream_tasks
+
+    return JSONResponse({"status": "cancel_requested", "taskid": taskid, "still_exists": still_exists, "cancelled_immediate": cancelled})
+
+@app.get("/stream-status/{taskid}")
+async def stream_status(taskid: str):
+    async with active_tasks_lock:
+        task = active_stream_tasks.get(taskid)
+        if not task:
+            return JSONResponse({"status": "not_found_or_done", "taskid": taskid})
+
+    if task.done():
+        try:
+            res = task.result()
+            return JSONResponse({"status": "done", "taskid": taskid, "result": str(res)})
+        except asyncio.CancelledError:
+            return JSONResponse({"status": "cancelled", "taskid": taskid})
+        except Exception as e:
+            logging.exception(f"Task {taskid} finished with exception")
+            return JSONResponse({"status": "done_with_exception", "taskid": taskid, "exception": str(e)})
+    else:
+        return JSONResponse({"status": "running", "taskid": taskid})
+
+if __name__ == "__main__":
+    ensure_dir_exists(MODELS_DIR)
+    ensure_dir_exists(AUDIO_OUTPUT_DIR)
+
+    if check_and_download_dependencies():
+        model_file_path = os.path.join(MODELS_DIR, "kokoro-v1.1-zh.onnx")
+        voices_file_path = os.path.join(MODELS_DIR, "voices-v1.1-zh.bin")
+        config_file_path = os.path.join(MODELS_DIR, "config.json")
+        if not (os.path.exists(model_file_path) and os.path.exists(voices_file_path) and os.path.exists(config_file_path)):
+            logging.error(f"关键模型文件在 {MODELS_DIR} 中缺失，无法启动服务。请确保依赖已正确下载。")
+        else:
+            if not kokoro_model or not g2p_converter:
+                kokoro_model = Kokoro(model_file_path, voices_file_path, vocab_config=config_file_path)
+                g2p_converter = zh.ZHG2P(version="1.1")
+                logging.info("模型在 __main__ 中加载成功 (用于直接运行测试)。")
+            uvicorn.run(app, host="0.0.0.0", port=8210)
+EOF
+
+      - name: Commit changes
+        run: |
+          git add src/utils/stream_rtp_streaming.py src/chinese/main.py
+          git commit -m "Add RTP streaming from create_stream and streaming task cancel APIs" || echo "No changes to commit"
+
+      - name: Create Pull Request
+        uses: peter-evans/create-pull-request@v5
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          commit-message: 'Add RTP streaming from create_stream and streaming task cancel APIs'
+          branch: ${{ github.event.inputs.branch || 'feature/rtp-streaming-with-cancel' }}
+          title: ${{ github.event.inputs.pr_title || 'RTP streaming from create_stream + cancel/status APIs' }}
+          body: ${{ github.event.inputs.pr_body || 'Add async RTP streaming from kokoro_onnx.create_stream and task management endpoints (start, cancel, status).' }}
+          base: main
+          labels: 'automation,rtp'
