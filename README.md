@@ -102,6 +102,11 @@ curl -X POST "http://localhost:8211/generate-speech/" \
 - **中文声音模型**: 使用`v1.1-zh`版本模型，提供多种中文女声和男声选择。[查看详细列表](https://huggingface.co/hexgrad/Kokoro-82M-v1.1-zh/tree/main/voices)
 - **其他语言声音模型**: 使用`v1.0`版本模型，支持多种语言和声音类型。[查看详细列表](https://huggingface.co/hexgrad/Kokoro-82M/blob/main/VOICES.md)
 
+## 文档
+
+- [RTP 语音传输中的 SSRC 说明](docs/RTP_SSRC_CN.md) - 详细解释 RTP 协议中 SSRC 的含义和使用方法
+- [RTP SSRC Explanation (English)](docs/RTP_SSRC_EN.md) - English version of RTP SSRC documentation
+
 ## 许可证
 
 本项目采用[MIT许可证](LICENSE)，基于[原kokoro-onnx项目](https://github.com/thewh1teagle/kokoro-onnx)开发，请同时遵循原项目的许可要求。 

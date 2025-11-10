@@ -102,6 +102,11 @@ curl -X POST "http://localhost:8211/generate-speech/" \
 - **Chinese Voice Models**: Uses the `v1.1-zh` version model, providing various Chinese female and male voices. [View detailed list](https://huggingface.co/hexgrad/Kokoro-82M-v1.1-zh/tree/main/voices)
 - **Other Language Voice Models**: Uses the `v1.0` version model, supporting various languages and voice types. [View detailed list](https://huggingface.co/hexgrad/Kokoro-82M/blob/main/VOICES.md)
 
+## Documentation
+
+- [RTP SSRC Explanation for Voice Transmission](docs/RTP_SSRC_EN.md) - Detailed explanation of SSRC meaning and usage in RTP protocol
+- [RTP 语音传输中的 SSRC 说明（中文）](docs/RTP_SSRC_CN.md) - Chinese version of RTP SSRC documentation
+
 ## License
 
 This project is licensed under the [MIT License](LICENSE), based on the [original kokoro-onnx project](https://github.com/thewh1teagle/kokoro-onnx). Please also follow the licensing requirements of the original project. 
