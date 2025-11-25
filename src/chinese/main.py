@@ -19,11 +19,6 @@ if SRC_DIR not in sys.path:
     sys.path.insert(0, SRC_DIR)
 
 import numpy as np
-# 1. 先拿到原函数
-_load = np.load
-# 2. 再包一层，只改 allow_pickle
-np.load = lambda *a, **k: _load(*a, **{**k, "allow_pickle": True})
-
 import logging
 import uvicorn
 import uuid
@@ -49,8 +44,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-#MODELS_DIR = os.path.join(BASE_DIR, "models")
-MODELS_DIR = "/home/liuzhongping/kokoro-82M-zh-en-V1_1"
+MODELS_DIR = os.path.join(BASE_DIR, "models")
 AUDIO_OUTPUT_DIR = os.path.join(BASE_DIR, "generated_audio")
 
 app = FastAPI()
@@ -492,12 +486,9 @@ async def startup_event():
     else:
         logging.info("依赖文件已就绪，开始加载模型...")
         try:
-            # model_path = os.path.join(MODELS_DIR, "kokoro-v1.1-zh.onnx")
-            # voices_path = os.path.join(MODELS_DIR, "voices-v1.1-zh.bin")
-            # config_path = os.path.join(MODELS_DIR, "config.json")
-            model_path = os.path.join(MODELS_DIR, "model.onnx")
-            voices_path = os.path.join(MODELS_DIR, "zf_001.npy")
-            config_path = os.path.join(MODELS_DIR, "conf.json")
+            model_path = os.path.join(MODELS_DIR, "kokoro-v1.1-zh.onnx")
+            voices_path = os.path.join(MODELS_DIR, "voices-v1.1-zh.bin")
+            config_path = os.path.join(MODELS_DIR, "config.json")
 
             if not (os.path.exists(model_path) and os.path.exists(voices_path) and os.path.exists(config_path)):
                 logging.error(f"一个或多个模型文件在 {MODELS_DIR} 中缺失，无法加载模型。")
@@ -726,12 +717,9 @@ if __name__ == "__main__":
     ensure_dir_exists(AUDIO_OUTPUT_DIR)
 
     if check_and_download_dependencies():
-        # model_file_path = os.path.join(MODELS_DIR, "kokoro-v1.1-zh.onnx")
-        # voices_file_path = os.path.join(MODELS_DIR, "voices-v1.1-zh.bin")
-        # config_file_path = os.path.join(MODELS_DIR, "config.json")
-        model_file_path = os.path.join(MODELS_DIR, "model.onnx")
-        voices_file_path = os.path.join(MODELS_DIR, "zf_001.npy")
-        config_file_path = os.path.join(MODELS_DIR, "conf.json")
+        model_file_path = os.path.join(MODELS_DIR, "kokoro-v1.1-zh.onnx")
+        voices_file_path = os.path.join(MODELS_DIR, "voices-v1.1-zh.bin")
+        config_file_path = os.path.join(MODELS_DIR, "config.json")
         if not (os.path.exists(model_file_path) and os.path.exists(voices_file_path) and os.path.exists(config_file_path)):
             logging.error(f"关键模型文件在 {MODELS_DIR} 中缺失，无法启动服务。请确保依赖已正确下载。")
         else:

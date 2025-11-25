@@ -6,20 +6,13 @@ import logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-#MODELS_DIR = os.path.join(BASE_DIR, "models")
+MODELS_DIR = os.path.join(BASE_DIR, "models")
 
-# 从 main.py 中提取的依赖文件及其下载链接
-# DEPENDENCIES = {
-#     "kokoro-v1.1-zh.onnx": "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.1/kokoro-v1.1-zh.onnx",
-#     "voices-v1.1-zh.bin": "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.1/voices-v1.1-zh.bin",
-#     "config.json": "https://huggingface.co/hexgrad/Kokoro-82M-v1.1-zh/raw/main/config.json"
-# }
-MODELS_DIR = "/home/liuzhongping/kokoro-82M-zh-en-V1_1"
-
+#从 main.py 中提取的依赖文件及其下载链接
 DEPENDENCIES = {
-    "model.onnx": "https://www.modelscope.cn/models/manyeyes/kokoro-82M-zh-en-V1_1/resolve/master/model.onnx",
-    "zf_001.bin": "https://www.modelscope.cn/models/manyeyes/kokoro-82M-zh-en-V1_1/resolve/master/voices/zf_001.bin",
-    "conf.json": "https://www.modelscope.cn/models/manyeyes/kokoro-82M-zh-en-V1_1/resolve/master/conf.json"
+    "kokoro-v1.1-zh.onnx": "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.1/kokoro-v1.1-zh.onnx",
+    "voices-v1.1-zh.bin": "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.1/voices-v1.1-zh.bin",
+    "config.json": "https://huggingface.co/hexgrad/Kokoro-82M-v1.1-zh/raw/main/config.json"
 }
 
 def ensure_dir_exists(directory_path):
