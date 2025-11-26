@@ -9,6 +9,7 @@
 - 🚀 高性能FastAPI接口，响应迅速
 - 🐳 完整支持Docker容器化部署
 - 🌏 中文和其他语言模型分离部署（位于src/chinese和src/other目录）
+- 🔀 **支持中英文混合输入的流式TTS音频生成**
 - 📦 首次启动自动下载并管理依赖资源
 - 💾 支持音频文件缓存，提高重复请求响应速度
 - 🔄 支持语音生成速度调节
@@ -82,6 +83,32 @@ curl -X POST "http://localhost:8211/generate-speech/" \
      -d '{"text":"Hello world, this is a test.", "voice":"af_heart", "filename":"hello_test", "speed": 1.0}' \
      --output hello_test.wav
 ```
+
+**中英文混合流式语音合成（RTP推流）：**
+
+中文服务（端口8210）支持中英文混合输入，自动检测文本中的中文和英文片段，分别使用对应的语音模型生成音频，并通过RTP流式传输。
+
+```console
+curl -X POST "http://localhost:8210/stream-rtp-streaming-mixed/" \
+     -H "Content-Type: application/json" \
+     -d '{
+       "text": "你好，Welcome to 北京！This is a test of mixed language streaming.",
+       "voice_zh": "zf_001",
+       "voice_en": "af_heart",
+       "target_host": "192.168.1.100",
+       "target_port": 5004,
+       "speed": 1.0
+     }'
+```
+
+| 参数 | 说明 |
+|------|------|
+| text | 要转换的文本内容（支持中英文混合） |
+| voice_zh | 中文声音模型名称，如"zf_001" |
+| voice_en | 英文声音模型名称，如"af_heart" |
+| target_host | RTP流目标IP地址 |
+| target_port | RTP流目标UDP端口 |
+| speed | (可选)语音速度调节，默认为1.0 |
 
 | 参数 | 说明 |
 |------|------|

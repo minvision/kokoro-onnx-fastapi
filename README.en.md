@@ -9,6 +9,7 @@ A lightweight text-to-speech API service based on [kokoro-onnx](https://github.c
 - 🚀 High-performance FastAPI interface with quick response
 - 🐳 Full Docker containerization support
 - 🌏 Separate deployment for Chinese and other language models (located in src/chinese and src/other directories)
+- 🔀 **Support for mixed Chinese-English input in streaming TTS audio generation**
 - 📦 Automatic dependency download and management on first startup
 - 💾 Audio file caching to improve response speed for repeated requests
 - 🔄 Speech speed adjustment support
@@ -82,6 +83,32 @@ curl -X POST "http://localhost:8211/generate-speech/" \
      -d '{"text":"Hello world, this is a test.", "voice":"af_heart", "filename":"hello_test", "speed": 1.0}' \
      --output hello_test.wav
 ```
+
+**Mixed Chinese-English Streaming Speech Synthesis (RTP Stream):**
+
+The Chinese service (port 8210) supports mixed Chinese-English input, automatically detecting Chinese and English segments in the text, generating audio using the corresponding voice models, and streaming via RTP.
+
+```console
+curl -X POST "http://localhost:8210/stream-rtp-streaming-mixed/" \
+     -H "Content-Type: application/json" \
+     -d '{
+       "text": "你好，Welcome to 北京！This is a test of mixed language streaming.",
+       "voice_zh": "zf_001",
+       "voice_en": "af_heart",
+       "target_host": "192.168.1.100",
+       "target_port": 5004,
+       "speed": 1.0
+     }'
+```
+
+| Parameter | Description |
+|-----------|-------------|
+| text | Text content to be converted (supports mixed Chinese-English) |
+| voice_zh | Chinese voice model name, e.g., "zf_001" |
+| voice_en | English voice model name, e.g., "af_heart" |
+| target_host | RTP stream target IP address |
+| target_port | RTP stream target UDP port |
+| speed | (Optional) Speech speed adjustment, default is 1.0 |
 
 | Parameter | Description |
 |-----------|-------------|
