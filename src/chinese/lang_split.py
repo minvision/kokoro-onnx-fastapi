@@ -9,7 +9,6 @@ The segmentation strategy is based on ASCII vs non-ASCII character ranges,
 with optimization to prevent over-segmentation of short English segments.
 """
 
-import re
 from typing import List, Tuple
 
 

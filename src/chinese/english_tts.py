@@ -9,9 +9,9 @@ an interface compatible with the Chinese kokoro_model.create_stream.
 """
 
 import os
-import sys
 import pathlib
 import logging
+import importlib.util
 from typing import Optional, AsyncGenerator, Tuple
 
 import numpy as np
@@ -28,6 +28,39 @@ OTHER_MODELS_DIR = OTHER_DIR / "models"
 _english_kokoro_model = None
 _english_g2p_converter = None
 _english_model_lock = None  # Will be initialized on first use
+_download_deps_module = None
+
+
+def _load_download_deps_module():
+    """
+    Safely load the download_deps module from src/other using importlib.
+    This avoids modifying sys.path which can cause side effects.
+    
+    Returns:
+        The download_deps module or None if loading fails.
+    """
+    global _download_deps_module
+    if _download_deps_module is not None:
+        return _download_deps_module
+    
+    try:
+        module_path = OTHER_DIR / "download_deps.py"
+        if not module_path.exists():
+            logger.error(f"download_deps.py not found at {module_path}")
+            return None
+        
+        spec = importlib.util.spec_from_file_location("other_download_deps", module_path)
+        if spec is None or spec.loader is None:
+            logger.error(f"Failed to create module spec for {module_path}")
+            return None
+        
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        _download_deps_module = module
+        return module
+    except Exception as e:
+        logger.exception(f"Failed to load download_deps module: {e}")
+        return None
 
 
 def _ensure_dependencies_downloaded() -> bool:
@@ -39,14 +72,13 @@ def _ensure_dependencies_downloaded() -> bool:
         True if dependencies are ready, False otherwise.
     """
     try:
-        # Add src/other to path temporarily to import download_deps
-        other_str = str(OTHER_DIR)
-        if other_str not in sys.path:
-            sys.path.insert(0, other_str)
+        download_deps = _load_download_deps_module()
+        if download_deps is None:
+            logger.error("Could not load download_deps module")
+            return False
         
-        from download_deps import check_and_download_dependencies, ensure_dir_exists
-        ensure_dir_exists(str(OTHER_MODELS_DIR))
-        return check_and_download_dependencies()
+        download_deps.ensure_dir_exists(str(OTHER_MODELS_DIR))
+        return download_deps.check_and_download_dependencies()
     except Exception as e:
         logger.exception(f"Failed to download English model dependencies: {e}")
         return False

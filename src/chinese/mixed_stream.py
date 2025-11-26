@@ -10,17 +10,22 @@ with the existing stream_rtp_from_asyncgen interface.
 """
 
 import logging
-from typing import AsyncGenerator, Tuple, Optional, Callable, Any
+from typing import AsyncGenerator, Tuple, Optional, Any
 
 import numpy as np
 
 from .lang_split import segment_text
+# Lazy import for English TTS to avoid circular imports and improve startup time
+# The actual import happens on first use in _process_english_segment
 
 logger = logging.getLogger(__name__)
 
 # Default voice settings
 DEFAULT_ZH_VOICE = "zf_001"
 DEFAULT_EN_VOICE = "af_heart"
+
+# Module-level cache for English TTS functions
+_english_tts_module = None
 
 
 async def create_mixed_stream(
@@ -137,6 +142,15 @@ async def _process_chinese_segment(
         logger.exception(f"Failed to process Chinese segment: {e}")
 
 
+def _get_english_tts_module():
+    """Lazy load the English TTS module to avoid import overhead at startup."""
+    global _english_tts_module
+    if _english_tts_module is None:
+        from . import english_tts
+        _english_tts_module = english_tts
+    return _english_tts_module
+
+
 async def _process_english_segment(
     text: str,
     voice: str,
@@ -154,11 +168,11 @@ async def _process_english_segment(
         Tuples of (audio_samples, sample_rate).
     """
     try:
-        # Import English TTS adapter
-        from .english_tts import create_english_stream
+        # Use lazy-loaded English TTS module
+        english_tts = _get_english_tts_module()
         
         # Create stream from English model
-        async for chunk in create_english_stream(text, voice=voice, speed=speed):
+        async for chunk in english_tts.create_english_stream(text, voice=voice, speed=speed):
             yield chunk
             
     except Exception as e:
@@ -261,8 +275,8 @@ async def create_mixed_stream_with_fallback(
         else:
             # Try English first, fall back to Chinese
             try:
-                from .english_tts import get_english_model
-                en_model, en_g2p = get_english_model()
+                english_tts = _get_english_tts_module()
+                en_model, en_g2p = english_tts.get_english_model()
                 
                 if en_model is not None and en_g2p is not None:
                     # Use English model
