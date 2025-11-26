@@ -5,11 +5,40 @@ from src/other/main.py.
 import asyncio
 import inspect
 import logging
+import sys
+import os
 from typing import AsyncGenerator, Tuple, Optional, Any
 
 import numpy as np
 
 logger = logging.getLogger(__name__)
+
+# Ensure src directory is in path for imports
+_src_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _src_dir not in sys.path:
+    sys.path.insert(0, _src_dir)
+
+
+def _get_english_tts():
+    """
+    Get the English Kokoro model and G2P converter.
+    
+    Returns:
+        Tuple of (kokoro_model, g2p_converter) from src.other.main
+        
+    Raises:
+        RuntimeError: If models are not available or not initialized.
+    """
+    try:
+        from other.main import kokoro_model as kokoro_english, g2p_converter as en_g2p
+    except ImportError:
+        try:
+            from src.other.main import kokoro_model as kokoro_english, g2p_converter as en_g2p
+        except ImportError:
+            logger.error("Failed to import English Kokoro model from src.other.main")
+            raise RuntimeError("English Kokoro model not available")
+    
+    return kokoro_english, en_g2p
 
 
 async def create_english_stream(
@@ -34,22 +63,8 @@ async def create_english_stream(
     Yields:
         Tuples of (audio_samples: np.ndarray, sample_rate: int)
     """
-    # Import lazily to avoid circular imports and ensure the model is loaded
-    try:
-        from src.other.main import kokoro_model as kokoro_english, g2p_converter as en_g2p
-    except ImportError:
-        # Fallback for different import contexts
-        import sys
-        import os
-        # Ensure src is in path
-        src_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        if src_dir not in sys.path:
-            sys.path.insert(0, src_dir)
-        try:
-            from other.main import kokoro_model as kokoro_english, g2p_converter as en_g2p
-        except ImportError:
-            logger.error("Failed to import English Kokoro model from src.other.main")
-            raise RuntimeError("English Kokoro model not available")
+    # Get English TTS instances using helper function
+    kokoro_english, en_g2p = _get_english_tts()
     
     if kokoro_english is None:
         logger.error("English Kokoro model (kokoro_model) is not initialized")

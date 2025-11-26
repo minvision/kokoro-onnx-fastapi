@@ -5,6 +5,8 @@ Combines Chinese and English TTS to handle mixed language text.
 import asyncio
 import inspect
 import logging
+import sys
+import os
 from typing import AsyncGenerator, Tuple, Optional, Any
 
 import numpy as np
@@ -12,6 +14,25 @@ import numpy as np
 from .lang_split import split_by_language
 
 logger = logging.getLogger(__name__)
+
+# Ensure current directory is in path for imports
+_current_dir = os.path.dirname(os.path.abspath(__file__))
+if _current_dir not in sys.path:
+    sys.path.insert(0, _current_dir)
+
+
+def _get_chinese_tts():
+    """
+    Get the Chinese Kokoro model and G2P converter.
+    
+    Returns:
+        Tuple of (kokoro_model, g2p_converter) from current module
+    """
+    try:
+        from .main import kokoro_model as kokoro_chinese, g2p_converter as zh_g2p
+    except ImportError:
+        from main import kokoro_model as kokoro_chinese, g2p_converter as zh_g2p
+    return kokoro_chinese, zh_g2p
 
 
 async def create_mixed_stream(
@@ -40,17 +61,8 @@ async def create_mixed_stream(
     Yields:
         Tuples of (audio_samples: np.ndarray, sample_rate: int)
     """
-    # Import Chinese TTS model
-    try:
-        from .main import kokoro_model as kokoro_chinese, g2p_converter as zh_g2p
-    except ImportError:
-        # Handle different import contexts
-        import sys
-        import os
-        current_dir = os.path.dirname(os.path.abspath(__file__))
-        if current_dir not in sys.path:
-            sys.path.insert(0, current_dir)
-        from main import kokoro_model as kokoro_chinese, g2p_converter as zh_g2p
+    # Get Chinese TTS instances using helper function
+    kokoro_chinese, zh_g2p = _get_chinese_tts()
     
     # Import English TTS adapter
     from .english_tts import create_english_stream
@@ -189,10 +201,7 @@ async def create_mixed_stream_with_phonemes(
         
         if all_chinese:
             # Use phonemes directly for Chinese
-            try:
-                from .main import kokoro_model as kokoro_chinese
-            except ImportError:
-                from main import kokoro_model as kokoro_chinese
+            kokoro_chinese, _ = _get_chinese_tts()
             
             if kokoro_chinese is not None and hasattr(kokoro_chinese, 'create_stream'):
                 stream_gen = kokoro_chinese.create_stream(

@@ -99,7 +99,8 @@ class TestMixedStream:
             for i in range(3):
                 yield (np.zeros(1600, dtype=np.float32), 24000)
         
-        mock.create_stream = Mock(return_value=mock_stream())
+        # Use side_effect to return a new generator each time
+        mock.create_stream = Mock(side_effect=lambda *args, **kwargs: mock_stream())
         return mock
     
     @pytest.fixture
@@ -118,8 +119,8 @@ class TestMixedStream:
             for i in range(2):
                 yield (np.zeros(1600, dtype=np.float32), 24000)
         
-        mock.create_stream = Mock(return_value=mock_stream())
-        return mock
+        # Use side_effect to return a new generator each time
+        mock.create_stream = Mock(side_effect=lambda *args, **kwargs: mock_stream())
     
     @pytest.fixture
     def mock_g2p_english(self):
@@ -194,7 +195,8 @@ class TestEnglishTTSAdapter:
             for i in range(2):
                 yield (np.zeros(1600, dtype=np.float32), 24000)
         
-        mock.create_stream = Mock(return_value=mock_stream())
+        # Use side_effect to return a new generator each time
+        mock.create_stream = Mock(side_effect=lambda *args, **kwargs: mock_stream())
         return mock
     
     @pytest.fixture
