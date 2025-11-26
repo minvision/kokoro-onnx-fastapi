@@ -217,13 +217,10 @@ class TestEnglishTTS:
     @pytest.mark.asyncio
     async def test_english_stream_requires_model(self):
         """Test that English stream raises error when model not available."""
-        from chinese.english_tts import create_english_stream, _english_init_done
+        from chinese.english_tts import create_english_stream, reset_english_model_state
         
-        # Reset init state
-        import chinese.english_tts as et
-        et._english_init_done = False
-        et._english_kokoro = None
-        et._english_g2p = None
+        # Reset init state using the public function
+        reset_english_model_state()
         
         # Mock the model loading to fail (model files don't exist)
         with patch('chinese.english_tts.ENGLISH_MODELS_DIR') as mock_path:

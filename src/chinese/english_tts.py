@@ -75,6 +75,17 @@ async def _ensure_english_model_loaded() -> bool:
             return False
 
 
+def reset_english_model_state():
+    """
+    Reset the English model state for testing purposes.
+    This allows tests to re-trigger model loading logic.
+    """
+    global _english_kokoro, _english_g2p, _english_init_done
+    _english_kokoro = None
+    _english_g2p = None
+    _english_init_done = False
+
+
 def get_english_kokoro():
     """Get the English Kokoro instance (may be None if not loaded)."""
     return _english_kokoro

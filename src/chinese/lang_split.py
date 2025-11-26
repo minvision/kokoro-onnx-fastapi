@@ -5,7 +5,6 @@ Splits input text into segments by language (Chinese/English) based on ASCII/non
 Also merges short English segments to reduce frequent language switching during TTS synthesis.
 """
 
-import re
 from typing import List, Tuple
 
 # Minimum length for standalone English segment (to avoid frequent switching)
