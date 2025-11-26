@@ -28,7 +28,7 @@ import time
 from datetime import datetime
 from typing import Optional, Dict, Any, Tuple
 from fastapi import FastAPI, HTTPException, Body
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 import inspect
 
 from misaki import zh
@@ -38,6 +38,11 @@ from cache import check_audio_cache
 
 # stream sender
 from utils.stream_rtp_streaming import stream_rtp_from_asyncgen
+
+# mixed TTS and stream sender modules
+from stream_sender import StreamSender, Protocol
+from mixed_tts import MixedTTS, segment_by_language, detect_language_mix
+from utils import float_to_int16_bytes, ensure_mono, resample_linear
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -710,6 +715,157 @@ async def stream_status(taskid: str):
             return JSONResponse({"status": "running", "taskid": taskid, "meta": meta})
     else:
         return JSONResponse({"status": "unknown", "taskid": taskid, "meta": meta})
+
+
+@app.post("/synthesize/")
+async def synthesize_mixed_endpoint(
+    text: str = Body(..., description="要转换为语音的文本（支持中文、英文或中英混合）"),
+    voice: str = Body("zf_001", description="中文声音模型，例如 'zf_001'"),
+    english_voice: str = Body(None, description="可选：英文声音模型，例如 'af_heart'。若不提供则使用默认英文声音"),
+    speed: float = Body(1.0, description="语速，默认 1.0"),
+    ip: str = Body(None, description="可选：接收音频流的目标 IP 地址"),
+    port: int = Body(None, description="可选：接收音频流的目标端口"),
+    protocol: str = Body("udp", description="可选：发送协议 'udp' 或 'tcp'，默认 'udp'"),
+    sample_rate: int = Body(24000, description="可选：输出采样率，默认 24000")
+):
+    """
+    中英混合文本语音合成接口。
+    
+    支持功能：
+    - 自动识别文本中的中英文片段
+    - 分别使用中文和英文 TTS 模型合成
+    - 按原文顺序拼接输出
+    - 可选：同时将音频流发送到指定 IP:port（支持 UDP/TCP）
+    
+    返回：
+    - StreamingResponse：逐 chunk 返回合成的音频字节（PCM16 格式）
+    """
+    global kokoro_model, g2p_converter
+    
+    if not kokoro_model or not g2p_converter:
+        raise HTTPException(status_code=503, detail="模型服务尚未准备好")
+    
+    try:
+        speed = round(float(speed), 1)
+    except Exception:
+        raise HTTPException(status_code=400, detail="speed 参数无效")
+    
+    # Validate protocol
+    if protocol.lower() not in ["udp", "tcp"]:
+        raise HTTPException(status_code=400, detail="protocol 必须是 'udp' 或 'tcp'")
+    
+    # Validate sample_rate
+    valid_rates = [8000, 16000, 22050, 24000, 44100, 48000]
+    if sample_rate not in valid_rates:
+        raise HTTPException(status_code=400, detail=f"sample_rate 必须是以下之一: {valid_rates}")
+    
+    # Check if socket streaming is requested
+    enable_socket = ip is not None and port is not None
+    
+    if enable_socket:
+        # Validate port
+        if not (1 <= port <= 65535):
+            raise HTTPException(status_code=400, detail="port 必须在 1-65535 范围内")
+    
+    # Analyze text language composition
+    lang_info = detect_language_mix(text)
+    logger.info(f"[synthesize] text analysis: {lang_info}")
+    
+    # Create MixedTTS instance
+    mixed_tts = MixedTTS(
+        chinese_model=kokoro_model,
+        chinese_g2p=g2p_converter,
+        target_sample_rate=sample_rate
+    )
+    
+    async def generate_audio_stream():
+        """Generator that yields audio chunks and optionally sends to socket."""
+        sender = None
+        
+        if enable_socket:
+            try:
+                sender = StreamSender(ip, port, protocol.lower())
+                connected = await sender.connect()
+                if connected:
+                    logger.info(f"[synthesize] Connected to {ip}:{port} via {protocol}")
+                else:
+                    logger.warning(f"[synthesize] Failed to connect to {ip}:{port}, continuing without socket streaming")
+            except Exception as e:
+                logger.warning(f"[synthesize] Socket connection error: {e}")
+        
+        try:
+            # Use streaming synthesis
+            async for audio_chunk, sr in mixed_tts.create_stream(
+                text,
+                voice=voice,
+                english_voice=english_voice,
+                speed=speed
+            ):
+                # Convert to target sample rate if needed
+                if sr != sample_rate:
+                    audio_chunk = resample_linear(audio_chunk, sr, sample_rate)
+                
+                # Ensure mono
+                audio_chunk = ensure_mono(audio_chunk)
+                
+                # Convert to PCM16 bytes
+                pcm_bytes = float_to_int16_bytes(audio_chunk)
+                
+                # Send to socket if connected
+                if sender and sender.is_connected:
+                    try:
+                        await sender.send(pcm_bytes)
+                    except Exception as e:
+                        logger.warning(f"[synthesize] Socket send error: {e}")
+                
+                # Yield to HTTP response
+                yield pcm_bytes
+                
+        except Exception as e:
+            logger.exception(f"[synthesize] Streaming error: {e}")
+            raise
+        finally:
+            if sender:
+                await sender.close()
+    
+    return StreamingResponse(
+        generate_audio_stream(),
+        media_type="audio/pcm",
+        headers={
+            "X-Sample-Rate": str(sample_rate),
+            "X-Channels": "1",
+            "X-Bits-Per-Sample": "16",
+            "X-Language-Mix": "true" if lang_info.get('is_mixed') else "false"
+        }
+    )
+
+
+@app.post("/analyze-text/")
+async def analyze_text_endpoint(
+    text: str = Body(..., description="要分析的文本")
+):
+    """
+    分析文本的语言组成。
+    返回中英文比例和分段信息。
+    """
+    if not text:
+        raise HTTPException(status_code=400, detail="text 不能为空")
+    
+    # Get language analysis
+    lang_info = detect_language_mix(text)
+    
+    # Get segments for detailed view
+    segments = segment_by_language(text)
+    segment_details = [
+        {"text": seg_text[:100] + "..." if len(seg_text) > 100 else seg_text, "language": lang}
+        for seg_text, lang in segments
+    ]
+    
+    return JSONResponse({
+        "analysis": lang_info,
+        "segments": segment_details,
+        "total_length": len(text)
+    })
 
 
 if __name__ == "__main__":
