@@ -7,11 +7,13 @@
 # - clear_msg / 按 uuid 清理时会取消正在运行任务、移除排队任务并关闭该 uuid 的 transport（以重置上下文）。
 # - 新增：在收到请求时记录本机时区格式的时间（received_local）并写入 job.meta；
 #         在开始发送语音时记录本机时区格式的时间（send_local）、uuid、text，并计算并记录两者的时间间隔（秒）。
+# - 新增：支持中英文混合输入的流式TTS音频生成（mixed language streaming TTS support）。
 """
 
 import os
 import sys
 import pathlib
+import re
 
 # Ensure src is on sys.path before importing local modules
 SRC_DIR = str(pathlib.Path(__file__).resolve().parents[1])
@@ -26,12 +28,12 @@ import asyncio
 import random
 import time
 from datetime import datetime
-from typing import Optional, Dict, Any, Tuple
+from typing import Optional, Dict, Any, Tuple, List
 from fastapi import FastAPI, HTTPException, Body
 from fastapi.responses import JSONResponse
 import inspect
 
-from misaki import zh
+from misaki import zh, en, espeak
 from kokoro_onnx import Kokoro
 from download_deps import check_and_download_dependencies, ensure_dir_exists
 from cache import check_audio_cache
@@ -49,8 +51,13 @@ AUDIO_OUTPUT_DIR = os.path.join(BASE_DIR, "generated_audio")
 
 app = FastAPI()
 
+# Chinese model and G2P converter
 kokoro_model: Optional[Kokoro] = None
 g2p_converter = None
+
+# English model and G2P converter for mixed language support
+kokoro_model_en: Optional[Kokoro] = None
+g2p_converter_en = None
 
 # Task / queue management data structures
 # active_stream_tasks: taskid -> 'queued' | asyncio.Task (running)
@@ -73,6 +80,106 @@ uuid_contexts_lock = asyncio.Lock()
 
 # lock to protect the above maps
 active_tasks_lock = asyncio.Lock()
+
+
+def detect_language_segments(text: str) -> List[Tuple[str, str]]:
+    """
+    Detect and split text into segments of Chinese and English/other content.
+    
+    Returns a list of tuples: (segment_text, language)
+    where language is 'zh' for Chinese or 'en' for English/other.
+    
+    Chinese characters are detected using Unicode ranges:
+    - CJK Unified Ideographs: \\u4e00-\\u9fff
+    - CJK Unified Ideographs Extension A: \\u3400-\\u4dbf
+    - CJK Compatibility Ideographs: \\uf900-\\ufaff
+    """
+    if not text or not text.strip():
+        return []
+    
+    # Pattern to match Chinese characters (including punctuation commonly used with Chinese)
+    chinese_pattern = re.compile(r'[\u4e00-\u9fff\u3400-\u4dbf\uf900-\ufaff\u3000-\u303f\uff00-\uffef]+')
+    
+    segments = []
+    last_end = 0
+    
+    for match in chinese_pattern.finditer(text):
+        start, end = match.span()
+        
+        # Add English segment before this Chinese segment (if any)
+        if start > last_end:
+            en_segment = text[last_end:start].strip()
+            if en_segment:
+                segments.append((en_segment, 'en'))
+        
+        # Add Chinese segment
+        zh_segment = match.group().strip()
+        if zh_segment:
+            segments.append((zh_segment, 'zh'))
+        
+        last_end = end
+    
+    # Add remaining English segment (if any)
+    if last_end < len(text):
+        en_segment = text[last_end:].strip()
+        if en_segment:
+            segments.append((en_segment, 'en'))
+    
+    # If no segments found, treat entire text as English
+    if not segments:
+        segments.append((text.strip(), 'en'))
+    
+    return segments
+
+
+async def create_mixed_language_stream(
+    text: str,
+    voice_zh: str,
+    voice_en: str,
+    speed: float = 1.0
+):
+    """
+    Create an async generator that yields audio chunks for mixed Chinese and English text.
+    
+    Args:
+        text: Input text containing both Chinese and English content
+        voice_zh: Voice model for Chinese segments (e.g., 'zf_001')
+        voice_en: Voice model for English segments (e.g., 'af_heart')
+        speed: Speech speed
+    
+    Yields:
+        Tuples of (audio_samples, sample_rate)
+    """
+    global kokoro_model, g2p_converter, kokoro_model_en, g2p_converter_en
+    
+    segments = detect_language_segments(text)
+    logger.info(f"[mixed-lang] Detected {len(segments)} segments: {[(s[:20]+'...' if len(s)>20 else s, lang) for s, lang in segments]}")
+    
+    for segment_text, lang in segments:
+        if not segment_text.strip():
+            continue
+            
+        try:
+            if lang == 'zh':
+                if not kokoro_model or not g2p_converter:
+                    logger.warning(f"[mixed-lang] Chinese model not loaded, skipping segment: {segment_text[:50]}")
+                    continue
+                phonemes, _ = g2p_converter(segment_text)
+                stream_gen = kokoro_model.create_stream(phonemes, voice=voice_zh, speed=speed, is_phonemes=True)
+            else:  # English or other
+                if not kokoro_model_en or not g2p_converter_en:
+                    logger.warning(f"[mixed-lang] English model not loaded, skipping segment: {segment_text[:50]}")
+                    continue
+                phonemes, _ = g2p_converter_en(segment_text)
+                stream_gen = kokoro_model_en.create_stream(phonemes, voice=voice_en, speed=speed, is_phonemes=True)
+            
+            # Yield all audio chunks from this segment
+            async for audio_chunk, sr in stream_gen:
+                yield audio_chunk, sr
+                
+        except Exception as e:
+            logger.exception(f"[mixed-lang] Failed to process segment '{segment_text[:50]}' (lang={lang}): {e}")
+            continue
 
 
 class PerUuidQueue:
@@ -476,28 +583,46 @@ async def _cancel_task_by_taskid(taskid: str, wait_seconds: float = 3.0) -> dict
 
 @app.on_event("startup")
 async def startup_event():
-    global kokoro_model, g2p_converter
-    logging.info("FastAPI 应用启动，开始检查和下载依赖文件...")
+    global kokoro_model, g2p_converter, kokoro_model_en, g2p_converter_en
+    logging.info("FastAPI 应用启动，开始检查和下载依赖文件（包含中文和英文模型）...")
     ensure_dir_exists(MODELS_DIR)
     ensure_dir_exists(AUDIO_OUTPUT_DIR)
 
-    if not check_and_download_dependencies():
+    # Download both Chinese and English model dependencies
+    if not check_and_download_dependencies(include_english=True):
         logging.error("依赖文件未能成功准备，应用可能无法正常处理请求。")
     else:
         logging.info("依赖文件已就绪，开始加载模型...")
+        
+        # Load Chinese model
         try:
             model_path = os.path.join(MODELS_DIR, "kokoro-v1.1-zh.onnx")
             voices_path = os.path.join(MODELS_DIR, "voices-v1.1-zh.bin")
             config_path = os.path.join(MODELS_DIR, "config.json")
 
             if not (os.path.exists(model_path) and os.path.exists(voices_path) and os.path.exists(config_path)):
-                logging.error(f"一个或多个模型文件在 {MODELS_DIR} 中缺失，无法加载模型。")
-                return
-            kokoro_model = Kokoro(model_path, voices_path, vocab_config=config_path)
-            g2p_converter = zh.ZHG2P(version="1.1")
-            logging.info("Kokoro 模型和 G2P 转换器加载成功。")
+                logging.error(f"一个或多个中文模型文件在 {MODELS_DIR} 中缺失，无法加载模型。")
+            else:
+                kokoro_model = Kokoro(model_path, voices_path, vocab_config=config_path)
+                g2p_converter = zh.ZHG2P(version="1.1")
+                logging.info("中文 Kokoro 模型和 G2P 转换器加载成功。")
         except Exception as e:
-            logging.exception(f"加载模型或 G2P 转换器失败: {e}")
+            logging.exception(f"加载中文模型或 G2P 转换器失败: {e}")
+        
+        # Load English model for mixed language support
+        try:
+            model_path_en = os.path.join(MODELS_DIR, "kokoro-v1.0.onnx")
+            voices_path_en = os.path.join(MODELS_DIR, "voices-v1.0.bin")
+            
+            if not (os.path.exists(model_path_en) and os.path.exists(voices_path_en)):
+                logging.warning(f"英文模型文件在 {MODELS_DIR} 中缺失，混合语言功能将不可用。")
+            else:
+                kokoro_model_en = Kokoro(model_path_en, voices_path_en)
+                fallback = espeak.EspeakFallback(british=False)
+                g2p_converter_en = en.G2P(trf=False, british=False, fallback=fallback)
+                logging.info("英文 Kokoro 模型和 G2P 转换器加载成功，混合语言功能已启用。")
+        except Exception as e:
+            logging.exception(f"加载英文模型或 G2P 转换器失败: {e}")
 
 
 @app.on_event("shutdown")
@@ -632,6 +757,114 @@ async def stream_rtp_streaming_endpoint(
     return JSONResponse({"status": "ok", "taskid": taskid_str, "uuid": user_uuid})
 
 
+@app.post("/stream-rtp-streaming-mixed/")
+async def stream_rtp_streaming_mixed_endpoint(
+    text: str = Body(..., description="要转换为语音的文本（支持中英文混合）"),
+    voice_zh: str = Body("zf_001", description="中文声音，例如 'zf_001'"),
+    voice_en: str = Body("af_heart", description="英文声音，例如 'af_heart'"),
+    target_host: str = Body(..., description="接收 RTP 的目标 IP"),
+    target_port: int = Body(..., description="接收 RTP 的目标 UDP 端口"),
+    speed: float = Body(1.0, description="语速"),
+    chunk_ms: int = Body(20, description="每个 RTP 包对应的毫秒数（默认20ms）"),
+    ssrc: int = Body(None, description="可选：指定包的初始ssrc"),
+    codec: str = Body("pcmu", description="编码：'pcmu' 或 'l16'（默认 pcmu）"),
+    taskid: str = Body(None, description="可选：指定用于管理该推流任务的 taskid（UUID 字符串），若为空服务端会生成"),
+    uuid_param: str = Body(None, description="可选：业务层 UUID，允许多次调用用相同 uuid_param 以便后续按 uuid 取消所有相关任务"),
+    clear_msg: bool = Body(False, description="是否在将请求放入队列前清除 uuid_param 所在队列的未执行或未执行完毕任务；默认 False")
+):
+    """
+    支持中英文混合输入的流式 RTP 语音合成端点。
+    
+    接收包含中英文混合内容的文本，自动检测语言段落，使用相应的模型生成语音，
+    并通过 RTP 流式传输到指定目标。
+    
+    参数说明：
+    - text: 要转换的文本，可包含中文和英文内容
+    - voice_zh: 中文语音模型（默认 'zf_001'）
+    - voice_en: 英文语音模型（默认 'af_heart'）
+    - 其他参数与 /stream-rtp-streaming/ 相同
+    """
+    global kokoro_model, g2p_converter, kokoro_model_en, g2p_converter_en
+    
+    # Check if at least one model is loaded
+    if not (kokoro_model and g2p_converter) and not (kokoro_model_en and g2p_converter_en):
+        raise HTTPException(status_code=503, detail="模型服务尚未准备好，中文和英文模型均未加载")
+
+    try:
+        speed = round(float(speed), 1)
+    except Exception:
+        raise HTTPException(status_code=400, detail="speed 参数无效")
+
+    # taskid 校验或生成
+    if taskid:
+        try:
+            uuid_obj = uuid.UUID(taskid)
+            taskid_str = str(uuid_obj)
+        except Exception:
+            raise HTTPException(status_code=400, detail="taskid 必须是有效的 UUID 字符串")
+    else:
+        taskid_str = str(uuid.uuid4())
+
+    # uuid_param 校验
+    user_uuid = None
+    if uuid_param is not None:
+        if isinstance(uuid_param, str) and uuid_param.strip() != "":
+            user_uuid = uuid_param.strip()
+        else:
+            raise HTTPException(status_code=400, detail="uuid_param 若提供必须为非空字符串")
+
+    async with active_tasks_lock:
+        if taskid_str in active_stream_tasks:
+            raise HTTPException(status_code=409, detail=f"taskid {taskid_str} 已存在（可能正在运行或已排队）")
+
+    # 如果请求要求先清除 uuid 队列，则执行清理
+    if clear_msg:
+        cleared = await _clear_queue_and_cancel(user_uuid)
+        logger.info(f"[stream-mixed-request] clear_msg requested for uuid={user_uuid}: {cleared}")
+
+    # Create mixed language stream generator
+    try:
+        stream_gen = create_mixed_language_stream(text, voice_zh, voice_en, speed)
+    except Exception as e:
+        logging.exception("create_mixed_language_stream failed")
+        raise HTTPException(status_code=500, detail=f"无法创建混合语言流: {e}")
+
+    if ssrc is None:
+        ssrc = random.getrandbits(32)
+
+    # prepare job dict, include meta received_at and text for logging/delay measurement
+    received_ts = time.time()
+    received_local = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S %Z%z")
+    job_meta = {"user_uuid": user_uuid, "target_host": target_host, "target_port": int(target_port),
+                "received_at": received_ts, "received_local": received_local, "text": text,
+                "voice_zh": voice_zh, "voice_en": voice_en, "mixed_language": True}
+    job = {
+        "taskid": taskid_str,
+        "user_uuid": user_uuid,
+        "stream_gen": stream_gen,
+        "target_host": target_host,
+        "target_port": int(target_port),
+        "chunk_ms": int(chunk_ms),
+        "ssrc": int(ssrc),
+        "codec": codec.lower() if isinstance(codec, str) else "pcmu",
+        "target_sr": 8000,
+        "logger_prefix": f"{target_host}:{target_port}[mixed]",
+        "meta": job_meta
+    }
+
+    # log request receipt (local time, uuid, taskid, text)
+    try:
+        display_text = (text[:300] + '...') if isinstance(text, str) and len(text) > 300 else text
+        logger.info(f"[mixed-request-received] time={received_local} uuid={user_uuid} taskid={taskid_str} voice_zh={voice_zh} voice_en={voice_en} text=\"{display_text}\"")
+    except Exception:
+        logger.exception("[mixed-request-received] failed to log request")
+
+    # enqueue job into the per-uuid queue
+    await _enqueue_job_for_uuid(user_uuid, job)
+
+    return JSONResponse({"status": "ok", "taskid": taskid_str, "uuid": user_uuid, "mixed_language": True})
+
+
 @app.post("/stream-cancel/{taskid}")
 async def stream_cancel(taskid: str):
     """
@@ -716,15 +949,29 @@ if __name__ == "__main__":
     ensure_dir_exists(MODELS_DIR)
     ensure_dir_exists(AUDIO_OUTPUT_DIR)
 
-    if check_and_download_dependencies():
+    if check_and_download_dependencies(include_english=True):
+        # Load Chinese model
         model_file_path = os.path.join(MODELS_DIR, "kokoro-v1.1-zh.onnx")
         voices_file_path = os.path.join(MODELS_DIR, "voices-v1.1-zh.bin")
         config_file_path = os.path.join(MODELS_DIR, "config.json")
         if not (os.path.exists(model_file_path) and os.path.exists(voices_file_path) and os.path.exists(config_file_path)):
-            logging.error(f"关键模型文件在 {MODELS_DIR} 中缺失，无法启动服务。请确保依赖已正确下载。")
+            logging.error(f"关键中文模型文件在 {MODELS_DIR} 中缺失，无法启动服务。请确保依赖已正确下载。")
         else:
             if not kokoro_model or not g2p_converter:
                 kokoro_model = Kokoro(model_file_path, voices_file_path, vocab_config=config_file_path)
                 g2p_converter = zh.ZHG2P(version="1.1")
-                logging.info("模型在 __main__ 中加载成功 (用于直接运行测试)。")
-            uvicorn.run(app, host="0.0.0.0", port=8210)
+                logging.info("中文模型在 __main__ 中加载成功 (用于直接运行测试)。")
+        
+        # Load English model for mixed language support
+        model_file_path_en = os.path.join(MODELS_DIR, "kokoro-v1.0.onnx")
+        voices_file_path_en = os.path.join(MODELS_DIR, "voices-v1.0.bin")
+        if os.path.exists(model_file_path_en) and os.path.exists(voices_file_path_en):
+            if not kokoro_model_en or not g2p_converter_en:
+                kokoro_model_en = Kokoro(model_file_path_en, voices_file_path_en)
+                fallback = espeak.EspeakFallback(british=False)
+                g2p_converter_en = en.G2P(trf=False, british=False, fallback=fallback)
+                logging.info("英文模型在 __main__ 中加载成功，混合语言功能已启用。")
+        else:
+            logging.warning(f"英文模型文件在 {MODELS_DIR} 中缺失，混合语言功能将不可用。")
+        
+        uvicorn.run(app, host="0.0.0.0", port=8210)

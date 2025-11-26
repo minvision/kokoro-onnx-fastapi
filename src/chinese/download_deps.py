@@ -9,10 +9,17 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 MODELS_DIR = os.path.join(BASE_DIR, "models")
 
 #从 main.py 中提取的依赖文件及其下载链接
+# Chinese model dependencies (v1.1-zh)
 DEPENDENCIES = {
     "kokoro-v1.1-zh.onnx": "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.1/kokoro-v1.1-zh.onnx",
     "voices-v1.1-zh.bin": "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.1/voices-v1.1-zh.bin",
     "config.json": "https://huggingface.co/hexgrad/Kokoro-82M-v1.1-zh/raw/main/config.json"
+}
+
+# English/other model dependencies (v1.0) for mixed language support
+DEPENDENCIES_EN = {
+    "kokoro-v1.0.onnx": "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/kokoro-v1.0.onnx",
+    "voices-v1.0.bin": "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/voices-v1.0.bin"
 }
 
 def ensure_dir_exists(directory_path):
@@ -41,10 +48,16 @@ def download_file(url, local_filename):
             os.remove(local_path)
         return False
 
-def check_and_download_dependencies():
-    """检查所有依赖文件，如果不存在则下载到 models 目录"""
+def check_and_download_dependencies(include_english=False):
+    """检查所有依赖文件，如果不存在则下载到 models 目录
+    
+    Args:
+        include_english: If True, also download English model dependencies for mixed language support
+    """
     ensure_dir_exists(MODELS_DIR) # 确保检查前 models 目录已创建
     all_files_present = True
+    
+    # Download Chinese model dependencies
     for filename, url in DEPENDENCIES.items():
         local_path = os.path.join(MODELS_DIR, filename)
         if not os.path.exists(local_path):
@@ -54,6 +67,18 @@ def check_and_download_dependencies():
                 logging.error(f"未能下载必需的依赖文件: {filename}。程序可能无法正常运行。")
         else:
             logging.info(f"依赖文件 {filename} 已存在于 {local_path}")
+    
+    # Download English model dependencies if requested
+    if include_english:
+        for filename, url in DEPENDENCIES_EN.items():
+            local_path = os.path.join(MODELS_DIR, filename)
+            if not os.path.exists(local_path):
+                logging.warning(f"英文模型依赖文件 {filename} 在 {MODELS_DIR} 中不存在，尝试下载...")
+                if not download_file(url, filename):
+                    all_files_present = False
+                    logging.error(f"未能下载英文模型依赖文件: {filename}。混合语言功能可能无法正常运行。")
+            else:
+                logging.info(f"英文模型依赖文件 {filename} 已存在于 {local_path}")
     
     if all_files_present:
         logging.info("所有依赖文件均已在 models 目录就绪。")
