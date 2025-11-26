@@ -48,6 +48,8 @@ def split_by_language(
         
         # Whitespace and common punctuation should follow the current segment's language
         # This prevents fragmentation on spaces/punctuation between same-language words
+        # Note: This is a basic set of ASCII punctuation. Chinese punctuation (。，！？等)
+        # is non-ASCII and will be handled as part of Chinese segments.
         if char.isspace() or char in '.,!?;:\'"-()[]{}':
             current_text += char
             continue

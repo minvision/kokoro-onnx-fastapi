@@ -53,6 +53,12 @@ def parse_args():
         help="Idle timeout in seconds (default: 30.0, 0 for no timeout)"
     )
     parser.add_argument(
+        "--bind", "-b",
+        type=str,
+        default="0.0.0.0",
+        help="IP address to bind to (default: 0.0.0.0, use 127.0.0.1 for localhost only)"
+    )
+    parser.add_argument(
         "--strip-rtp-header",
         action="store_true",
         help="Strip 12-byte RTP header from packets before writing"
@@ -79,12 +85,14 @@ def main():
     signal.signal(signal.SIGTERM, signal_handler)
     
     # Create UDP socket
+    # Security note: By default binds to 0.0.0.0 (all interfaces) for testing flexibility.
+    # Use --bind 127.0.0.1 for localhost-only binding if concerned about network exposure.
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     
     try:
-        sock.bind(("0.0.0.0", args.port))
-        print(f"[{datetime.now().strftime('%H:%M:%S')}] Listening on UDP port {args.port}")
+        sock.bind((args.bind, args.port))
+        print(f"[{datetime.now().strftime('%H:%M:%S')}] Listening on {args.bind}:{args.port}")
         print(f"[{datetime.now().strftime('%H:%M:%S')}] Output file: {args.output}")
         
         if args.timeout > 0:

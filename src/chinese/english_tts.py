@@ -13,6 +13,7 @@ import sys
 import logging
 from typing import Optional, AsyncGenerator, Tuple
 import numpy as np
+import requests
 
 # Ensure src is on sys.path before importing local modules
 import pathlib
@@ -41,7 +42,6 @@ ENGLISH_DEPENDENCIES = {
     "voices-v1.0.bin": "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/voices-v1.0.bin"
 }
 
-
 def ensure_english_model_files() -> bool:
     """
     Check and download English model files if they don't exist.
@@ -49,8 +49,6 @@ def ensure_english_model_files() -> bool:
     Returns:
         True if all files are present (downloaded or already existed), False otherwise.
     """
-    import requests
-    
     if not os.path.exists(MODELS_DIR):
         os.makedirs(MODELS_DIR)
     
@@ -60,7 +58,8 @@ def ensure_english_model_files() -> bool:
         if not os.path.exists(local_path):
             logger.info(f"Downloading English model file: {filename}")
             try:
-                with requests.get(url, stream=True) as r:
+                # Use timeout to prevent hanging on slow/unresponsive servers
+                with requests.get(url, stream=True, timeout=(30, 300)) as r:
                     r.raise_for_status()
                     with open(local_path, 'wb') as f:
                         for chunk in r.iter_content(chunk_size=8192):

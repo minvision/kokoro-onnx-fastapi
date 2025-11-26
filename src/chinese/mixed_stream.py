@@ -10,13 +10,23 @@ import logging
 from typing import Optional, AsyncGenerator, Tuple, Dict, Any
 import numpy as np
 
-from .lang_split import split_by_language
-from .english_tts import (
-    create_english_stream,
-    initialize_english_model,
-    is_english_model_ready,
-    get_default_english_voice
-)
+# Support both relative imports (when run as package) and absolute imports (when run standalone)
+try:
+    from .lang_split import split_by_language
+    from .english_tts import (
+        create_english_stream,
+        initialize_english_model,
+        is_english_model_ready,
+        get_default_english_voice
+    )
+except ImportError:
+    from lang_split import split_by_language
+    from english_tts import (
+        create_english_stream,
+        initialize_english_model,
+        is_english_model_ready,
+        get_default_english_voice
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -63,7 +73,8 @@ async def create_mixed_stream(
     if g2p_converter is None:
         raise RuntimeError("Chinese G2P converter not initialized")
     
-    # Initialize English model if needed
+    # Initialize English model if needed (note: this should already be done at startup,
+    # this is just a fallback that may block briefly if model files need downloading)
     if not is_english_model_ready():
         if not initialize_english_model():
             logger.warning("English model initialization failed, English segments will use Chinese model")
