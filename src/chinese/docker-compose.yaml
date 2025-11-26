@@ -5,8 +5,8 @@ services:
     container_name: kokoro-onnx-fastapi-chinese
     image: kamjin3086/kokoro-onnx-fastapi-chinese
     build:
-      context: .
-      dockerfile: Dockerfile
+      context: ..
+      dockerfile: chinese/Dockerfile
     ports:
       - "8210:8210"
     volumes:

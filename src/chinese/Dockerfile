@@ -1,20 +1,24 @@
 # 使用官方 Python 运行时作为父镜像
 FROM python:3.12-slim
 
-# 安装 uv
+# 安装 uv 和 espeak-ng (用于英文 G2P 转换)
+RUN apt-get update && apt-get install -y espeak-ng && rm -rf /var/lib/apt/lists/*
 RUN pip install uv
 
 # 设置工作目录
 WORKDIR /app
 
 # 安装依赖
-COPY requirements.txt .
+COPY chinese/requirements.txt .
 RUN uv pip install --no-cache-dir -r requirements.txt --system
 
 # 复制应用代码到工作目录
-COPY main.py .
-COPY cache.py .
-COPY download_deps.py .
+COPY chinese/main.py .
+COPY chinese/cache.py .
+COPY chinese/download_deps.py .
+
+# 复制 utils 目录 (用于流式 RTP 发送)
+COPY utils ./utils
 # COPY . . # 或者直接复制所有内容，如果确定没有其他不必要的文件
 
 # 创建模型和音频输出目录 (这些目录将通过 docker-compose volumes 映射)

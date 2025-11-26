@@ -31,8 +31,9 @@ from fastapi import FastAPI, HTTPException, Body
 from fastapi.responses import JSONResponse
 import inspect
 
-from misaki import zh
+from misaki import zh, en, espeak
 from kokoro_onnx import Kokoro
+import re
 from download_deps import check_and_download_dependencies, ensure_dir_exists
 from cache import check_audio_cache
 
@@ -50,7 +51,8 @@ AUDIO_OUTPUT_DIR = os.path.join(BASE_DIR, "generated_audio")
 app = FastAPI()
 
 kokoro_model: Optional[Kokoro] = None
-g2p_converter = None
+g2p_zh_converter = None
+g2p_en_converter = None
 
 # Task / queue management data structures
 # active_stream_tasks: taskid -> 'queued' | asyncio.Task (running)
@@ -73,6 +75,90 @@ uuid_contexts_lock = asyncio.Lock()
 
 # lock to protect the above maps
 active_tasks_lock = asyncio.Lock()
+
+
+def segment_mixed_text(text: str):
+    """
+    Segment text into Chinese and non-Chinese (English/other) parts.
+    Returns a list of tuples: (segment_text, is_chinese)
+    """
+    segments = []
+    # Pattern to match Chinese characters (CJK Unified Ideographs and common Chinese punctuation)
+    chinese_pattern = re.compile(r'[\u4e00-\u9fff\u3400-\u4dbf\u3000-\u303f\uff00-\uffef]+')
+    
+    current_pos = 0
+    for match in chinese_pattern.finditer(text):
+        start, end = match.span()
+        # Add non-Chinese segment before this match
+        if start > current_pos:
+            non_chinese = text[current_pos:start].strip()
+            if non_chinese:
+                segments.append((non_chinese, False))
+        # Add Chinese segment
+        chinese = text[start:end]
+        if chinese:
+            segments.append((chinese, True))
+        current_pos = end
+    
+    # Add remaining non-Chinese text after last Chinese match
+    if current_pos < len(text):
+        remaining = text[current_pos:].strip()
+        if remaining:
+            segments.append((remaining, False))
+    
+    # If no segments found, treat entire text based on content
+    if not segments:
+        segments.append((text, False))
+    
+    return segments
+
+
+def convert_mixed_text_to_phonemes(text: str):
+    """
+    Convert mixed Chinese/English text to phonemes by segmenting and processing each part.
+    Returns combined phonemes string.
+    """
+    global g2p_zh_converter, g2p_en_converter
+    
+    segments = segment_mixed_text(text)
+    all_phonemes = []
+    
+    for segment_text, is_chinese in segments:
+        if not segment_text.strip():
+            continue
+        
+        try:
+            if is_chinese and g2p_zh_converter:
+                phonemes, _ = g2p_zh_converter(segment_text)
+            elif g2p_en_converter:
+                phonemes, _ = g2p_en_converter(segment_text)
+            else:
+                # Fallback to Chinese converter if English converter is not available
+                if g2p_zh_converter:
+                    phonemes, _ = g2p_zh_converter(segment_text)
+                else:
+                    raise RuntimeError("No G2P converter available")
+            
+            if phonemes:
+                all_phonemes.append(phonemes)
+        except Exception as e:
+            logger.warning(f"G2P conversion failed for segment '{segment_text}': {e}")
+            # Try with the other converter as fallback
+            try:
+                if is_chinese and g2p_en_converter:
+                    phonemes, _ = g2p_en_converter(segment_text)
+                elif g2p_zh_converter:
+                    phonemes, _ = g2p_zh_converter(segment_text)
+                else:
+                    continue
+                if phonemes:
+                    all_phonemes.append(phonemes)
+            except Exception:
+                logger.exception(f"Fallback G2P conversion also failed for segment '{segment_text}'")
+                continue
+    
+    # Join phonemes with space
+    return ' '.join(all_phonemes)
 
 
 class PerUuidQueue:
@@ -476,7 +562,7 @@ async def _cancel_task_by_taskid(taskid: str, wait_seconds: float = 3.0) -> dict
 
 @app.on_event("startup")
 async def startup_event():
-    global kokoro_model, g2p_converter
+    global kokoro_model, g2p_zh_converter, g2p_en_converter
     logging.info("FastAPI 应用启动，开始检查和下载依赖文件...")
     ensure_dir_exists(MODELS_DIR)
     ensure_dir_exists(AUDIO_OUTPUT_DIR)
@@ -494,8 +580,18 @@ async def startup_event():
                 logging.error(f"一个或多个模型文件在 {MODELS_DIR} 中缺失，无法加载模型。")
                 return
             kokoro_model = Kokoro(model_path, voices_path, vocab_config=config_path)
-            g2p_converter = zh.ZHG2P(version="1.1")
-            logging.info("Kokoro 模型和 G2P 转换器加载成功。")
+            # Initialize Chinese G2P converter
+            g2p_zh_converter = zh.ZHG2P(version="1.1")
+            logging.info("Chinese Kokoro 模型和 G2P 转换器加载成功。")
+            
+            # Initialize English G2P converter for mixed language support
+            try:
+                fallback = espeak.EspeakFallback(british=False)
+                g2p_en_converter = en.G2P(trf=False, british=False, fallback=fallback)
+                logging.info("English G2P 转换器加载成功，支持中英混合文本。")
+            except Exception as e:
+                logging.warning(f"English G2P 转换器加载失败（中英混合可能受限）: {e}")
+                g2p_en_converter = None
         except Exception as e:
             logging.exception(f"加载模型或 G2P 转换器失败: {e}")
 
@@ -530,7 +626,7 @@ async def shutdown_event():
 
 @app.post("/stream-rtp-streaming/")
 async def stream_rtp_streaming_endpoint(
-    text: str = Body(..., description="要转换为语音的文本"),
+    text: str = Body(..., description="要转换为语音的文本（支持中英混合）"),
     voice: str = Body(..., description="声音，例如 'zf_001'"),
     target_host: str = Body(..., description="接收 RTP 的目标 IP"),
     target_port: int = Body(..., description="接收 RTP 的目标 UDP 端口"),
@@ -544,10 +640,11 @@ async def stream_rtp_streaming_endpoint(
 ):
     """
     接收请求并将工作放入以 uuid_param 为键的队列，队列内顺序执行。
+    支持中英文混合文本的流式 TTS 生成。
     clear_msg=True 时会先删除/取消该 uuid_param 队列中未执行或未执行完毕的任务（并关闭该 uuid 的 transport，上下文重建在下次入队时）。
     """
-    global kokoro_model, g2p_converter
-    if not kokoro_model or not g2p_converter:
+    global kokoro_model, g2p_zh_converter, g2p_en_converter
+    if not kokoro_model or not g2p_zh_converter:
         raise HTTPException(status_code=503, detail="模型服务尚未准备好")
 
     try:
@@ -582,9 +679,9 @@ async def stream_rtp_streaming_endpoint(
         cleared = await _clear_queue_and_cancel(user_uuid)
         logger.info(f"[stream-request] clear_msg requested for uuid={user_uuid}: {cleared}")
 
-    # g2p
+    # g2p - Use mixed text converter for Chinese/English mixed content
     try:
-        phonemes, _ = g2p_converter(text)
+        phonemes = convert_mixed_text_to_phonemes(text)
     except Exception as e:
         logging.exception("g2p conversion failed")
         raise HTTPException(status_code=500, detail=f"g2p 转换失败: {e}")
@@ -723,8 +820,15 @@ if __name__ == "__main__":
         if not (os.path.exists(model_file_path) and os.path.exists(voices_file_path) and os.path.exists(config_file_path)):
             logging.error(f"关键模型文件在 {MODELS_DIR} 中缺失，无法启动服务。请确保依赖已正确下载。")
         else:
-            if not kokoro_model or not g2p_converter:
+            if not kokoro_model or not g2p_zh_converter:
                 kokoro_model = Kokoro(model_file_path, voices_file_path, vocab_config=config_file_path)
-                g2p_converter = zh.ZHG2P(version="1.1")
-                logging.info("模型在 __main__ 中加载成功 (用于直接运行测试)。")
+                g2p_zh_converter = zh.ZHG2P(version="1.1")
+                logging.info("Chinese 模型在 __main__ 中加载成功 (用于直接运行测试)。")
+                # Initialize English G2P converter for mixed language support
+                try:
+                    fallback = espeak.EspeakFallback(british=False)
+                    g2p_en_converter = en.G2P(trf=False, british=False, fallback=fallback)
+                    logging.info("English G2P 转换器在 __main__ 中加载成功。")
+                except Exception as e:
+                    logging.warning(f"English G2P 转换器加载失败（中英混合可能受限）: {e}")
             uvicorn.run(app, host="0.0.0.0", port=8210)

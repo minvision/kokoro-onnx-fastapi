@@ -9,6 +9,7 @@ A lightweight text-to-speech API service based on [kokoro-onnx](https://github.c
 - 🚀 High-performance FastAPI interface with quick response
 - 🐳 Full Docker containerization support
 - 🌏 Separate deployment for Chinese and other language models (located in src/chinese and src/other directories)
+- 🔀 **Support for mixed Chinese/English text streaming TTS generation** (Chinese service supports mixed language input)
 - 📦 Automatic dependency download and management on first startup
 - 💾 Audio file caching to improve response speed for repeated requests
 - 🔄 Speech speed adjustment support
