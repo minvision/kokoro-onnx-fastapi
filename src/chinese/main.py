@@ -545,6 +545,7 @@ async def stream_rtp_streaming_endpoint(
     """
     接收请求并将工作放入以 uuid_param 为键的队列，队列内顺序执行。
     clear_msg=True 时会先删除/取消该 uuid_param 队列中未执行或未执行完毕的任务（并关闭该 uuid 的 transport，上下文重建在下次入队时）。
+    支持中英混合文本：会自动检测文本中的中文和英文部分，分别使用中文和英文TTS引擎处理。
     """
     global kokoro_model, g2p_converter
     if not kokoro_model or not g2p_converter:
@@ -582,18 +583,29 @@ async def stream_rtp_streaming_endpoint(
         cleared = await _clear_queue_and_cancel(user_uuid)
         logger.info(f"[stream-request] clear_msg requested for uuid={user_uuid}: {cleared}")
 
-    # g2p
-    try:
-        phonemes, _ = g2p_converter(text)
-    except Exception as e:
-        logging.exception("g2p conversion failed")
-        raise HTTPException(status_code=500, detail=f"g2p 转换失败: {e}")
-
+    # 使用混合流处理中英混合文本
+    # 导入混合流模块
+    from .mixed_stream import create_mixed_stream
+    from .lang_split import split_by_language
+    
+    # 检测文本是否包含英文（用于日志）
+    segments = split_by_language(text)
+    has_english = any(lang == 'en' for lang, _ in segments)
+    if has_english:
+        logger.info(f"[stream-request] Mixed language text detected, using mixed stream")
+    
     # create_stream 返回异步生成器（延迟生成，直到消费）
+    # 使用 create_mixed_stream 处理中英混合文本
     try:
-        stream_gen = kokoro_model.create_stream(phonemes, voice=voice, speed=speed, is_phonemes=True)
+        stream_gen = create_mixed_stream(
+            text,
+            voice_zh=voice,
+            voice_en="af_heart",  # 默认英文声音
+            speed=speed,
+            sample_rate=24000,
+        )
     except Exception as e:
-        logging.exception("create_stream failed")
+        logging.exception("create_mixed_stream failed")
         raise HTTPException(status_code=500, detail=f"无法创建流: {e}")
 
     if ssrc is None:
