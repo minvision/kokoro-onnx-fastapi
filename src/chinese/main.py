@@ -39,6 +39,9 @@ from cache import check_audio_cache
 # stream sender
 from utils.stream_rtp_streaming import stream_rtp_from_asyncgen
 
+# mixed stream support for Chinese-English text
+from mixed_stream import create_mixed_stream_with_fallback, DEFAULT_EN_VOICE
+
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -530,8 +533,8 @@ async def shutdown_event():
 
 @app.post("/stream-rtp-streaming/")
 async def stream_rtp_streaming_endpoint(
-    text: str = Body(..., description="要转换为语音的文本"),
-    voice: str = Body(..., description="声音，例如 'zf_001'"),
+    text: str = Body(..., description="要转换为语音的文本（支持中英文混合）"),
+    voice: str = Body(..., description="中文声音，例如 'zf_001'"),
     target_host: str = Body(..., description="接收 RTP 的目标 IP"),
     target_port: int = Body(..., description="接收 RTP 的目标 UDP 端口"),
     speed: float = Body(1.0, description="语速"),
@@ -540,10 +543,12 @@ async def stream_rtp_streaming_endpoint(
     codec: str = Body("pcmu", description="编码：'pcmu' 或 'l16'（默认 pcmu）"),
     taskid: str = Body(None, description="可选：指定用于管理该推流任务的 taskid（UUID 字符串），若为空服务端会生成"),
     uuid_param: str = Body(None, description="可选：业务层 UUID，允许多次调用用相同 uuid_param 以便后续按 uuid 取消所有相关任务"),
-    clear_msg: bool = Body(False, description="是否在将请求放入队列前清除 uuid_param 所在队列的未执行或未执行完毕任务；默认 False")
+    clear_msg: bool = Body(False, description="是否在将请求放入队列前清除 uuid_param 所在队列的未执行或未执行完毕任务；默认 False"),
+    en_voice: str = Body(None, description="可选：英文声音，例如 'af_heart'；若不提供则使用默认英文声音"),
 ):
     """
     接收请求并将工作放入以 uuid_param 为键的队列，队列内顺序执行。
+    支持中英文混合文本，自动分段并使用对应语言的TTS模型合成。
     clear_msg=True 时会先删除/取消该 uuid_param 队列中未执行或未执行完毕的任务（并关闭该 uuid 的 transport，上下文重建在下次入队时）。
     """
     global kokoro_model, g2p_converter
@@ -582,19 +587,21 @@ async def stream_rtp_streaming_endpoint(
         cleared = await _clear_queue_and_cancel(user_uuid)
         logger.info(f"[stream-request] clear_msg requested for uuid={user_uuid}: {cleared}")
 
-    # g2p
+    # Use mixed stream for Chinese-English mixed text support
+    # This replaces the previous g2p + create_stream approach
+    en_voice_to_use = en_voice if en_voice else DEFAULT_EN_VOICE
     try:
-        phonemes, _ = g2p_converter(text)
+        stream_gen = create_mixed_stream_with_fallback(
+            text=text,
+            zh_voice=voice,
+            en_voice=en_voice_to_use,
+            speed=speed,
+            zh_model=kokoro_model,
+            zh_g2p=g2p_converter,
+        )
     except Exception as e:
-        logging.exception("g2p conversion failed")
-        raise HTTPException(status_code=500, detail=f"g2p 转换失败: {e}")
-
-    # create_stream 返回异步生成器（延迟生成，直到消费）
-    try:
-        stream_gen = kokoro_model.create_stream(phonemes, voice=voice, speed=speed, is_phonemes=True)
-    except Exception as e:
-        logging.exception("create_stream failed")
-        raise HTTPException(status_code=500, detail=f"无法创建流: {e}")
+        logging.exception("create_mixed_stream failed")
+        raise HTTPException(status_code=500, detail=f"无法创建混合流: {e}")
 
     if ssrc is None:
         ssrc = random.getrandbits(32)
