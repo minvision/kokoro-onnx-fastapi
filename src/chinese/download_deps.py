@@ -8,12 +8,21 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 MODELS_DIR = os.path.join(BASE_DIR, "models")
 
-#从 main.py 中提取的依赖文件及其下载链接
-DEPENDENCIES = {
+# 中文模型依赖文件及其下载链接
+CHINESE_DEPENDENCIES = {
     "kokoro-v1.1-zh.onnx": "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.1/kokoro-v1.1-zh.onnx",
     "voices-v1.1-zh.bin": "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.1/voices-v1.1-zh.bin",
     "config.json": "https://huggingface.co/hexgrad/Kokoro-82M-v1.1-zh/raw/main/config.json"
 }
+
+# 英文模型依赖文件及其下载链接（用于中英混合TTS）
+ENGLISH_DEPENDENCIES = {
+    "kokoro-v1.0.onnx": "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/kokoro-v1.0.onnx",
+    "voices-v1.0.bin": "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/voices-v1.0.bin"
+}
+
+# 兼容旧代码的 DEPENDENCIES 变量（仅包含中文模型）
+DEPENDENCIES = CHINESE_DEPENDENCIES
 
 def ensure_dir_exists(directory_path):
     """确保目录存在，如果不存在则创建"""
@@ -41,11 +50,18 @@ def download_file(url, local_filename):
             os.remove(local_path)
         return False
 
-def check_and_download_dependencies():
-    """检查所有依赖文件，如果不存在则下载到 models 目录"""
+def check_and_download_dependencies(include_english: bool = False):
+    """
+    检查所有依赖文件，如果不存在则下载到 models 目录
+    
+    Args:
+        include_english: 是否包含英文模型依赖（用于中英混合TTS）
+    """
     ensure_dir_exists(MODELS_DIR) # 确保检查前 models 目录已创建
     all_files_present = True
-    for filename, url in DEPENDENCIES.items():
+    
+    # 下载中文模型依赖
+    for filename, url in CHINESE_DEPENDENCIES.items():
         local_path = os.path.join(MODELS_DIR, filename)
         if not os.path.exists(local_path):
             logging.warning(f"依赖文件 {filename} 在 {MODELS_DIR} 中不存在，尝试下载...")
@@ -55,10 +71,40 @@ def check_and_download_dependencies():
         else:
             logging.info(f"依赖文件 {filename} 已存在于 {local_path}")
     
+    # 下载英文模型依赖（如果需要）
+    if include_english:
+        for filename, url in ENGLISH_DEPENDENCIES.items():
+            local_path = os.path.join(MODELS_DIR, filename)
+            if not os.path.exists(local_path):
+                logging.warning(f"英文模型依赖文件 {filename} 在 {MODELS_DIR} 中不存在，尝试下载...")
+                if not download_file(url, filename):
+                    # 英文模型下载失败不影响整体，只记录警告
+                    logging.warning(f"未能下载英文模型依赖文件: {filename}。中英混合TTS功能可能不可用。")
+            else:
+                logging.info(f"英文模型依赖文件 {filename} 已存在于 {local_path}")
+    
     if all_files_present:
         logging.info("所有依赖文件均已在 models 目录就绪。")
     else:
         logging.warning("部分依赖文件下载失败或未找到。请检查日志获取详细信息。")
+    return all_files_present
+
+
+def check_and_download_english_dependencies():
+    """单独检查和下载英文模型依赖"""
+    ensure_dir_exists(MODELS_DIR)
+    all_files_present = True
+    
+    for filename, url in ENGLISH_DEPENDENCIES.items():
+        local_path = os.path.join(MODELS_DIR, filename)
+        if not os.path.exists(local_path):
+            logging.warning(f"英文模型依赖文件 {filename} 在 {MODELS_DIR} 中不存在，尝试下载...")
+            if not download_file(url, filename):
+                all_files_present = False
+                logging.error(f"未能下载英文模型依赖文件: {filename}")
+        else:
+            logging.info(f"英文模型依赖文件 {filename} 已存在于 {local_path}")
+    
     return all_files_present
 
 if __name__ == "__main__":
