@@ -36,6 +36,9 @@ logger = logging.getLogger(__name__)
 # Target sample rate for mixed output (use Chinese model's rate as default)
 DEFAULT_SAMPLE_RATE = 24000
 
+# Default English voice for mixed TTS
+DEFAULT_ENGLISH_VOICE = "af_heart"
+
 
 class MixedTTS:
     """
@@ -215,7 +218,7 @@ class MixedTTS:
             if lang == 'zh':
                 result = self._synthesize_chinese_segment(segment_text, voice, speed)
             else:  # 'en'
-                voice_to_use = english_voice or "af_heart"
+                voice_to_use = english_voice or DEFAULT_ENGLISH_VOICE
                 result = self._synthesize_english_segment(segment_text, voice_to_use, speed)
             
             if result:
@@ -297,7 +300,7 @@ class MixedTTS:
                         import english_tts
                     
                     if self._ensure_english_loaded():
-                        voice_to_use = english_voice or "af_heart"
+                        voice_to_use = english_voice or DEFAULT_ENGLISH_VOICE
                         stream = english_tts.create_english_stream(
                             segment_text,
                             voice_to_use,
@@ -310,7 +313,7 @@ class MixedTTS:
                         # Fallback to non-streaming synthesis
                         result = self._synthesize_english_segment(
                             segment_text,
-                            english_voice or "af_heart",
+                            english_voice or DEFAULT_ENGLISH_VOICE,
                             speed
                         )
                         if result:

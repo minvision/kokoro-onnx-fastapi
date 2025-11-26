@@ -181,10 +181,9 @@ def float_to_int16_bytes(samples: np.ndarray) -> bytes:
     """
     clipped = np.clip(samples, -1.0, 1.0)
     int16 = (clipped * 32767.0).astype(np.int16)
-    # Ensure little-endian
-    if int16.dtype.byteorder == ">" or (int16.dtype.byteorder == "=" and not np.little_endian):
-        int16 = int16.byteswap()
-    return int16.tobytes()
+    # Ensure little-endian byte order
+    int16_le = int16.astype('<i2')  # '<i2' specifies little-endian 2-byte integer
+    return int16_le.tobytes()
 
 
 def int16_bytes_to_float(pcm_bytes: bytes) -> np.ndarray:

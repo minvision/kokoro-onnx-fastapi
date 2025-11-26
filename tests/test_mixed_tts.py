@@ -77,14 +77,14 @@ class TestLanguageSegmentation:
     
     def test_is_ascii_char(self):
         """Test ASCII character detection."""
-        assert is_ascii_char('a') == True
-        assert is_ascii_char('Z') == True
-        assert is_ascii_char('5') == True
-        assert is_ascii_char(' ') == True
-        assert is_ascii_char('.') == True
-        assert is_ascii_char('你') == False
-        assert is_ascii_char('好') == False
-        assert is_ascii_char('世') == False
+        assert is_ascii_char('a')
+        assert is_ascii_char('Z')
+        assert is_ascii_char('5')
+        assert is_ascii_char(' ')
+        assert is_ascii_char('.')
+        assert not is_ascii_char('你')
+        assert not is_ascii_char('好')
+        assert not is_ascii_char('世')
     
     def test_segment_pure_chinese(self):
         """Test segmentation of pure Chinese text."""
@@ -167,27 +167,27 @@ class TestDetectLanguageMix:
         """Test detection of pure Chinese text."""
         result = detect_language_mix("你好世界")
         
-        assert result['has_chinese'] == True
-        assert result['has_english'] == False
-        assert result['is_mixed'] == False
+        assert result['has_chinese']
+        assert not result['has_english']
+        assert not result['is_mixed']
         assert result['chinese_ratio'] > 0.9
     
     def test_detect_pure_english(self):
         """Test detection of pure English text."""
         result = detect_language_mix("Hello world")
         
-        assert result['has_chinese'] == False
-        assert result['has_english'] == True
-        assert result['is_mixed'] == False
+        assert not result['has_chinese']
+        assert result['has_english']
+        assert not result['is_mixed']
         assert result['english_ratio'] > 0.9
     
     def test_detect_mixed(self):
         """Test detection of mixed text."""
         result = detect_language_mix("你好 hello 世界 world")
         
-        assert result['has_chinese'] == True
-        assert result['has_english'] == True
-        assert result['is_mixed'] == True
+        assert result['has_chinese']
+        assert result['has_english']
+        assert result['is_mixed']
         assert result['segment_count'] >= 2
 
 
@@ -281,10 +281,10 @@ class TestAudioUtils:
     
     def test_validate_sample_rate(self):
         """Test sample rate validation."""
-        assert validate_sample_rate(24000) == True
-        assert validate_sample_rate(48000) == True
-        assert validate_sample_rate(8000) == True
-        assert validate_sample_rate(12345) == False
+        assert validate_sample_rate(24000)
+        assert validate_sample_rate(48000)
+        assert validate_sample_rate(8000)
+        assert not validate_sample_rate(12345)
     
     def test_estimate_audio_duration(self):
         """Test audio duration estimation."""
@@ -306,7 +306,7 @@ class TestStreamSender:
         assert sender.host == "127.0.0.1"
         assert sender.port == 5200
         assert sender.protocol == Protocol.UDP
-        assert sender.is_connected == False
+        assert not sender.is_connected
     
     @pytest.mark.asyncio
     async def test_sender_protocol_string(self):
@@ -323,11 +323,11 @@ class TestStreamSender:
         result = await sender.connect()
         
         # UDP connection should succeed (it's connectionless)
-        assert result == True
-        assert sender.is_connected == True
+        assert result
+        assert sender.is_connected
         
         await sender.close()
-        assert sender.is_connected == False
+        assert not sender.is_connected
     
     @pytest.mark.asyncio
     async def test_udp_send_to_loopback(self):
@@ -346,7 +346,7 @@ class TestStreamSender:
         test_data = b"test audio data"
         result = await sender.send(test_data)
         
-        assert result == True
+        assert result
         
         # Receive and verify
         try:
@@ -360,9 +360,9 @@ class TestStreamSender:
     async def test_sender_context_manager(self):
         """Test StreamSender as async context manager."""
         async with StreamSender("127.0.0.1", 5200, Protocol.UDP) as sender:
-            assert sender.is_connected == True
+            assert sender.is_connected
         
-        assert sender.is_connected == False
+        assert not sender.is_connected
 
 
 class TestIntegration:

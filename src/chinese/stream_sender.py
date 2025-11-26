@@ -39,10 +39,20 @@ class StreamSender:
             port: Target port number
             protocol: Network protocol (UDP or TCP)
             buffer_size: Send buffer size in bytes
+            
+        Raises:
+            ValueError: If protocol is not 'udp' or 'tcp'
         """
         self.host = host
         self.port = port
-        self.protocol = Protocol(protocol.lower()) if isinstance(protocol, str) else protocol
+        # Handle protocol conversion with validation
+        if isinstance(protocol, str):
+            protocol_lower = protocol.lower()
+            if protocol_lower not in ('udp', 'tcp'):
+                raise ValueError(f"Unsupported protocol: {protocol}. Use 'udp' or 'tcp'.")
+            self.protocol = Protocol(protocol_lower)
+        else:
+            self.protocol = protocol
         self.buffer_size = buffer_size
         self._transport = None
         self._writer = None
