@@ -39,6 +39,9 @@ from cache import check_audio_cache
 # stream sender
 from utils.stream_rtp_streaming import stream_rtp_from_asyncgen
 
+# mixed language support
+from chinese.mixed_stream import create_mixed_stream
+
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -540,10 +543,12 @@ async def stream_rtp_streaming_endpoint(
     codec: str = Body("pcmu", description="编码：'pcmu' 或 'l16'（默认 pcmu）"),
     taskid: str = Body(None, description="可选：指定用于管理该推流任务的 taskid（UUID 字符串），若为空服务端会生成"),
     uuid_param: str = Body(None, description="可选：业务层 UUID，允许多次调用用相同 uuid_param 以便后续按 uuid 取消所有相关任务"),
-    clear_msg: bool = Body(False, description="是否在将请求放入队列前清除 uuid_param 所在队列的未执行或未执行完毕任务；默认 False")
+    clear_msg: bool = Body(False, description="是否在将请求放入队列前清除 uuid_param 所在队列的未执行或未执行完毕任务；默认 False"),
+    voice_en: str = Body(None, description="可选：英文部分使用的声音（默认 'af_heart'）")
 ):
     """
     接收请求并将工作放入以 uuid_param 为键的队列，队列内顺序执行。
+    支持中英混合文本，自动识别并使用相应的 TTS 引擎。
     clear_msg=True 时会先删除/取消该 uuid_param 队列中未执行或未执行完毕的任务（并关闭该 uuid 的 transport，上下文重建在下次入队时）。
     """
     global kokoro_model, g2p_converter
@@ -582,19 +587,20 @@ async def stream_rtp_streaming_endpoint(
         cleared = await _clear_queue_and_cancel(user_uuid)
         logger.info(f"[stream-request] clear_msg requested for uuid={user_uuid}: {cleared}")
 
-    # g2p
+    # 使用 mixed_stream 支持中英混合文本
+    # create_mixed_stream 返回异步生成器，内部会根据语言段自动调用中文或英文 TTS
     try:
-        phonemes, _ = g2p_converter(text)
+        stream_gen = create_mixed_stream(
+            text,
+            kokoro_model,
+            g2p_converter,
+            voice_zh=voice,
+            voice_en=voice_en,
+            speed=speed
+        )
     except Exception as e:
-        logging.exception("g2p conversion failed")
-        raise HTTPException(status_code=500, detail=f"g2p 转换失败: {e}")
-
-    # create_stream 返回异步生成器（延迟生成，直到消费）
-    try:
-        stream_gen = kokoro_model.create_stream(phonemes, voice=voice, speed=speed, is_phonemes=True)
-    except Exception as e:
-        logging.exception("create_stream failed")
-        raise HTTPException(status_code=500, detail=f"无法创建流: {e}")
+        logging.exception("create_mixed_stream failed")
+        raise HTTPException(status_code=500, detail=f"无法创建混合语言流: {e}")
 
     if ssrc is None:
         ssrc = random.getrandbits(32)
