@@ -49,6 +49,9 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 MODELS_DIR = os.path.join(BASE_DIR, "models")
 AUDIO_OUTPUT_DIR = os.path.join(BASE_DIR, "generated_audio")
 
+# Log truncation limits for segment display
+LOG_SEGMENT_PREVIEW_LENGTH = 50
+
 app = FastAPI()
 
 # Chinese model and G2P converter
@@ -162,13 +165,13 @@ async def create_mixed_language_stream(
         try:
             if lang == 'zh':
                 if not kokoro_model or not g2p_converter:
-                    logger.warning(f"[mixed-lang] Chinese model not loaded, skipping segment: {segment_text[:50]}")
+                    logger.warning(f"[mixed-lang] Chinese model not loaded, skipping segment: {segment_text[:LOG_SEGMENT_PREVIEW_LENGTH]}")
                     continue
                 phonemes, _ = g2p_converter(segment_text)
                 stream_gen = kokoro_model.create_stream(phonemes, voice=voice_zh, speed=speed, is_phonemes=True)
             else:  # English or other
                 if not kokoro_model_en or not g2p_converter_en:
-                    logger.warning(f"[mixed-lang] English model not loaded, skipping segment: {segment_text[:50]}")
+                    logger.warning(f"[mixed-lang] English model not loaded, skipping segment: {segment_text[:LOG_SEGMENT_PREVIEW_LENGTH]}")
                     continue
                 phonemes, _ = g2p_converter_en(segment_text)
                 stream_gen = kokoro_model_en.create_stream(phonemes, voice=voice_en, speed=speed, is_phonemes=True)
@@ -178,7 +181,7 @@ async def create_mixed_language_stream(
                 yield audio_chunk, sr
                 
         except Exception as e:
-            logger.exception(f"[mixed-lang] Failed to process segment '{segment_text[:50]}' (lang={lang}): {e}")
+            logger.exception(f"[mixed-lang] Failed to process segment '{segment_text[:LOG_SEGMENT_PREVIEW_LENGTH]}' (lang={lang}): {e}")
             continue
 
 
