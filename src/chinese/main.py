@@ -39,6 +39,9 @@ from cache import check_audio_cache
 # stream sender
 from utils.stream_rtp_streaming import stream_rtp_from_asyncgen
 
+# mixed language support
+from chinese.mixed_stream import create_mixed_stream
+
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -582,18 +585,19 @@ async def stream_rtp_streaming_endpoint(
         cleared = await _clear_queue_and_cancel(user_uuid)
         logger.info(f"[stream-request] clear_msg requested for uuid={user_uuid}: {cleared}")
 
-    # g2p
+    # Create mixed stream (handles both Chinese and English text)
+    # This replaces direct kokoro_model.create_stream call to support mixed language
     try:
-        phonemes, _ = g2p_converter(text)
+        stream_gen = create_mixed_stream(
+            text=text,
+            kokoro_chinese=kokoro_model,
+            g2p_chinese=g2p_converter,
+            voice=voice,
+            speed=speed,
+            sample_rate=24000  # Kokoro default sample rate
+        )
     except Exception as e:
-        logging.exception("g2p conversion failed")
-        raise HTTPException(status_code=500, detail=f"g2p 转换失败: {e}")
-
-    # create_stream 返回异步生成器（延迟生成，直到消费）
-    try:
-        stream_gen = kokoro_model.create_stream(phonemes, voice=voice, speed=speed, is_phonemes=True)
-    except Exception as e:
-        logging.exception("create_stream failed")
+        logging.exception("create_mixed_stream failed")
         raise HTTPException(status_code=500, detail=f"无法创建流: {e}")
 
     if ssrc is None:

@@ -90,6 +90,19 @@ curl -X POST "http://localhost:8211/generate-speech/" \
 | filename | (可选)生成的音频文件名，不含路径和扩展名 |
 | speed | (可选)语音速度调节，默认为1.0 |
 
+### 中英文混合语音合成
+
+中文服务支持中英文混合文本，会自动检测文本中的中英文部分并分别使用对应的语音模型进行合成：
+
+```console
+# RTP流式输出到指定IP:端口
+curl -X POST "http://localhost:8210/stream-rtp-streaming/" \
+     -H "Content-Type: application/json" \
+     -d '{"text":"你好，Hello World! 这是混合语音测试。", "voice":"zf_001", "target_host":"127.0.0.1", "target_port":5000}'
+```
+
+更多详情请参考 [src/chinese/README.md](src/chinese/README.md)
+
 ## 配置与自定义
 
 - 模型文件自动下载并保存至各自服务目录下的`models/`文件夹
