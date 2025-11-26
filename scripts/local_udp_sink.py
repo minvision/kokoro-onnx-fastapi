@@ -79,7 +79,7 @@ def parse_rtp_header(data: bytes) -> dict:
     }
 
 
-def run_udp_sink(port: int, output_file: str, timeout: float = 60.0, verbose: bool = True):
+def run_udp_sink(port: int, output_file: str, timeout: float = 60.0, verbose: bool = True, bind_addr: str = '127.0.0.1'):
     """
     Run the UDP sink to receive RTP packets.
     
@@ -88,15 +88,21 @@ def run_udp_sink(port: int, output_file: str, timeout: float = 60.0, verbose: bo
         output_file: Path to save raw PCM data
         timeout: Inactivity timeout in seconds (0 = infinite)
         verbose: Print packet information
+        bind_addr: IP address to bind to (default: 127.0.0.1 for security)
+    
+    Security Note:
+        By default, binds to 127.0.0.1 (localhost only). Use --bind 0.0.0.0
+        only when you need to receive packets from other machines and understand
+        the security implications.
     """
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    sock.bind(('0.0.0.0', port))
+    sock.bind((bind_addr, port))
     
     if timeout > 0:
         sock.settimeout(timeout)
     
-    print(f"UDP Sink listening on port {port}")
+    print(f"UDP Sink listening on {bind_addr}:{port}")
     print(f"Output file: {output_file}")
     print(f"Timeout: {timeout}s (0 = infinite)")
     print("Press Ctrl+C to stop\n")
@@ -217,6 +223,12 @@ def main():
         action='store_true',
         help='Suppress per-packet output'
     )
+    parser.add_argument(
+        '--bind', '-b',
+        type=str,
+        default='127.0.0.1',
+        help='IP address to bind to (default: 127.0.0.1, use 0.0.0.0 for all interfaces)'
+    )
     
     args = parser.parse_args()
     
@@ -224,7 +236,8 @@ def main():
         port=args.port,
         output_file=args.output,
         timeout=args.timeout,
-        verbose=not args.quiet
+        verbose=not args.quiet,
+        bind_addr=args.bind
     )
 
 

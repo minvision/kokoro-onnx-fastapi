@@ -7,11 +7,9 @@ in the repository README.
 """
 
 import sys
-import os
 import pathlib
-import asyncio
 import pytest
-from unittest.mock import Mock, AsyncMock, patch, MagicMock
+from unittest.mock import Mock, patch
 from typing import AsyncGenerator, Tuple
 
 import numpy as np
@@ -88,7 +86,7 @@ class TestLangSplit:
         
         assert is_primarily_chinese("中文文本") == True
         assert is_primarily_chinese("English text") == False
-        assert is_primarily_chinese("中中中混合") == True  # More Chinese chars (4/5)
+        assert is_primarily_chinese("中中中混合") == True  # All 5 characters are Chinese (non-ASCII)
         assert is_primarily_chinese("") == False
     
     def test_primarily_english(self):

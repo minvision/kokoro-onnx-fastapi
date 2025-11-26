@@ -5,7 +5,6 @@ Splits text into consecutive segments of Chinese (non-ASCII) and English (ASCII)
 Short English segments can be merged to reduce frequent language switching.
 """
 
-import re
 from typing import List, Tuple
 
 
